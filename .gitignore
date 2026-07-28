@@ -1,6 +1,12 @@
 node_modules/
 dist/
 
+# Electron 打包产物
+desktop/release/
+
+# 虚拟背景模型（几 MB 的二进制，用 scripts/fetch-models.sh 拉）
+web/public/models/
+
 # 录制文件和会议纪要 —— 含会议内容，绝不能进版本库
 data/
 

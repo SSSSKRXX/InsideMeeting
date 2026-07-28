@@ -11,6 +11,8 @@ import { listMeetings, readMeeting, updateMeeting, meetingDir } from './store.js
 import { processMeeting, resummarize, jobStatus } from './pipeline.js';
 import { checkFfmpeg } from './media.js';
 import { initLive, ingestLiveChunk, liveState, forceSummary } from './live.js';
+import { pushSummary, enabledChannels } from './notify.js';
+import { publicSettings, listRooms } from './roomstore.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -46,9 +48,19 @@ app.get('/api/config', (req, res) => {
       asr: Boolean(config.asr.apiKey),
       llm: Boolean(config.llm.apiKey),
       screenShare: true,
+      notify: enabledChannels(),
     },
   });
 });
+
+// 入会前查询房间是否需要密码、是否有等候室
+app.get('/api/rooms/:roomId/settings', (req, res) => {
+  const id = String(req.params.roomId || '').replace(/[^\w一-龥-]/g, '').slice(0, 40);
+  if (!id) return res.status(400).json({ error: '房间号无效' });
+  res.json(publicSettings(id));
+});
+
+app.get('/api/rooms-config', requireAdmin, (req, res) => res.json(listRooms()));
 
 app.get('/api/health', async (req, res) => {
   res.json({ ok: true, ffmpeg: await checkFfmpeg(), rooms: activeRooms().length, uptime: process.uptime() });
@@ -194,6 +206,22 @@ app.post('/api/meetings/:id/resummarize', async (req, res) => {
 
 app.get('/api/meetings/:id/job', (req, res) => res.json(jobStatus(safeId(req.params.id)) || { state: 'idle' }));
 
+// 手动推送纪要（会后自动推送失败、或想补发给某个渠道时用）
+app.post('/api/meetings/:id/notify', async (req, res) => {
+  const id = safeId(req.params.id);
+  if (!readMeeting(id)) return res.status(404).json({ error: '会议不存在' });
+  try {
+    const r = await pushSummary(id, { only: req.body?.channels });
+    await updateMeeting(id, (m) => {
+      m.notified = { at: Date.now(), sent: r.sent || [], failed: r.failed?.map((f) => f.channel) || [] };
+      return m;
+    });
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.delete('/api/meetings/:id', requireAdmin, (req, res) => {
   const id = safeId(req.params.id);
   const dir = meetingDir(id);
@@ -266,6 +294,9 @@ server.listen(config.port, config.host, async () => {
         : '关闭'
     }`
   );
+  const ch = enabledChannels();
+  const chOn = Object.entries(ch).filter(([, v]) => v).map(([k]) => ({ wecom: '企业微信', feishu: '飞书', email: '邮件' })[k]);
+  console.log(`  纪要推送：  ${chOn.length ? chOn.join('、') : '未配置'}`);
   console.log(
     `  组网模式：  ${config.networkMode}${
       config.networkMode === 'tailscale'

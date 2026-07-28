@@ -5,6 +5,7 @@ import { meetingDir, readMeeting, updateMeeting } from './store.js';
 import { detectSpeechRegions, extractAudioClip, probeDuration, tmpDir, checkFfmpeg, installHint } from './media.js';
 import { transcribeFile, mapLimit, isLikelyHallucination } from './asr.js';
 import { summarizeTranscript, extractActionItems } from './llm.js';
+import { pushSummary, enabledChannels } from './notify.js';
 
 /** meetingId -> { state, progress, message, startedAt, error } */
 const jobs = new Map();
@@ -226,6 +227,25 @@ export async function processMeeting(meetingId, { force = false, skipSummary = f
     });
 
     fs.rmSync(work, { recursive: true, force: true });
+
+    // ---- 6. 自动推送 ----
+    if (artifacts.summary && Object.values(enabledChannels()).some(Boolean)) {
+      setJob(meetingId, { progress: 97, message: '推送纪要' });
+      try {
+        const r = await pushSummary(meetingId);
+        await updateMeeting(meetingId, (m) => {
+          m.notified = { at: Date.now(), sent: r.sent, failed: r.failed?.map((f) => f.channel) || [] };
+          return m;
+        });
+        if (r.failed?.length) {
+          setJob(meetingId, { message: `已完成，但推送失败：${r.failed.map((f) => f.channel).join('、')}` });
+        }
+      } catch (e) {
+        // 推送失败不能让整个流程算失败 —— 纪要本身已经生成好了
+        setJob(meetingId, { message: `已完成，推送失败：${e.message.slice(0, 100)}` });
+      }
+    }
+
     return setJob(meetingId, { state: 'done', progress: 100, message: '完成' });
   } catch (e) {
     return setJob(meetingId, { state: 'error', message: e.message, error: e.message });

@@ -64,6 +64,26 @@ export const config = {
     turnPassword: process.env.TURN_PASSWORD || '',
   },
 
+  // 纪要自动推送：配了哪个渠道就发哪个
+  notify: {
+    enabled: bool(process.env.NOTIFY_ENABLED, true),
+    // 推送消息里「查看完整纪要」按钮指向的地址，例如 https://macmini.xxx.ts.net:8443
+    baseUrl: process.env.PUBLIC_BASE_URL || '',
+    wecomWebhook: process.env.WECOM_WEBHOOK || '',
+    feishuWebhook: process.env.FEISHU_WEBHOOK || '',
+    feishuSecret: process.env.FEISHU_SECRET || '',
+    smtp: {
+      host: process.env.SMTP_HOST || '',
+      port: num(process.env.SMTP_PORT, 465),
+      secure: bool(process.env.SMTP_SECURE, true),
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+      from: process.env.SMTP_FROM || '',
+    },
+    mailTo: (process.env.MAIL_TO || '').split(',').map((s) => s.trim()).filter(Boolean),
+    mailAttach: bool(process.env.MAIL_ATTACH, true),
+  },
+
   // ASR（语音转写）— OpenAI 兼容接口
   asr: {
     baseUrl: (process.env.ASR_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
