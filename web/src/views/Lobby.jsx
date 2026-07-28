@@ -171,9 +171,14 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
           </button>
 
           <div className="lobby-foot">
-            <button type="button" className="link" onClick={onArchive}>
-              查看历史会议与纪要
-            </button>
+            <div style={{ display: 'flex', gap: 14 }}>
+              <button type="button" className="link" onClick={onArchive}>
+                查看历史会议与纪要
+              </button>
+              <button type="button" className="link" onClick={() => (window.location.hash = '/admin')}>
+                管理后台
+              </button>
+            </div>
             <span className="muted">
               {serverConfig.features?.asr ? '转写已就绪' : '未配置转写'} ·{' '}
               {serverConfig.features?.llm ? '纪要已就绪' : '未配置纪要'} · 每{' '}

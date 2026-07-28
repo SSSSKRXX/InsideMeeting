@@ -318,6 +318,27 @@ button.link { background: none; border: 0; color: var(--accent); padding: 0; fon
 .doc hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
 .doc code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
 
+/* 管理后台 */
+.stat-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin: 4px 0 20px;
+}
+.stat {
+  background: var(--panel-2); border-radius: var(--radius); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.stat span { color: var(--muted); font-size: 12px; }
+.stat b { font-size: 20px; font-weight: 600; }
+.arch-detail h3 { font-size: 14px; margin: 24px 0 8px; color: var(--muted); }
+.arch-detail td.k { width: 30%; color: var(--muted); }
+.logbox {
+  background: #0b0e13; border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap;
+  word-break: break-all; max-height: 60vh; overflow-y: auto; margin: 0;
+}
+.danger-btn { border-color: var(--danger) !important; color: #fca5a5 !important; }
+
 .files { display: flex; flex-direction: column; gap: 6px; padding: 12px 0 40px; }
 .file { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
 .file .fname { flex: 1; }
