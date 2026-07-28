@@ -1,0 +1,41 @@
+{
+  "name": "inside-meeting-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "InsideMeeting 桌面客户端",
+  "main": "main.js",
+  "author": "SSSSKRXX",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.inside.meeting",
+    "productName": "InsideMeeting",
+    "directories": { "output": "release" },
+    "files": ["main.js", "preload.js", "setup.html"],
+    "mac": {
+      "category": "public.app-category.business",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "extendInfo": {
+        "NSCameraUsageDescription": "会议需要使用摄像头",
+        "NSMicrophoneUsageDescription": "会议需要使用麦克风，并用于生成会议纪要",
+        "NSScreenCaptureUsageDescription": "屏幕共享需要录制屏幕内容"
+      }
+    },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
