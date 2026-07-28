@@ -13,6 +13,7 @@ import { checkFfmpeg } from './media.js';
 import { initLive, ingestLiveChunk, liveState, forceSummary } from './live.js';
 import { pushSummary, enabledChannels } from './notify.js';
 import { publicSettings, listRooms } from './roomstore.js';
+import { adminStatus, storageBreakdown, cleanup, tailLog, adminRoomOps } from './admin.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -61,6 +62,47 @@ app.get('/api/rooms/:roomId/settings', (req, res) => {
 });
 
 app.get('/api/rooms-config', requireAdmin, (req, res) => res.json(listRooms()));
+
+// ---------------- 管理后台 ----------------
+
+// 探测：前端用它判断口令对不对，以及服务端有没有开启口令校验
+app.get('/api/admin/ping', requireAdmin, (req, res) =>
+  res.json({ ok: true, tokenRequired: Boolean(config.adminToken) })
+);
+
+app.get('/api/admin/status', requireAdmin, async (req, res) => {
+  try {
+    res.json(await adminStatus());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/storage', requireAdmin, (req, res) => res.json(storageBreakdown()));
+
+app.get('/api/admin/logs', requireAdmin, (req, res) =>
+  res.json(tailLog(Math.min(2000, Number(req.query.lines) || 200)))
+);
+
+app.post('/api/admin/cleanup', requireAdmin, (req, res) => {
+  const days = Math.max(1, Number(req.body?.days) || 30);
+  res.json(
+    cleanup({
+      days,
+      dryRun: req.body?.dryRun !== false, // 默认只预演，必须显式传 false 才真删
+      keepArtifacts: req.body?.keepArtifacts !== false,
+    })
+  );
+});
+
+app.post('/api/admin/rooms/:roomId', requireAdmin, (req, res) => {
+  const id = String(req.params.roomId || '').replace(/[^\w一-龥-]/g, '').slice(0, 40);
+  if (!id) return res.status(400).json({ error: '房间号无效' });
+  if ('password' in (req.body || {})) adminRoomOps.setPassword(id, req.body.password);
+  if (req.body?.revokeHost) adminRoomOps.revokeHostTokens(id);
+  const s = adminRoomOps.updateRoom(id, req.body || {});
+  res.json(s);
+});
 
 app.get('/api/health', async (req, res) => {
   res.json({ ok: true, ffmpeg: await checkFfmpeg(), rooms: activeRooms().length, uptime: process.uptime() });

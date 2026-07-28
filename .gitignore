@@ -3,6 +3,7 @@ dist/
 
 # Electron 打包产物
 desktop/release/
+tray/release/
 
 # 虚拟背景模型（几 MB 的二进制，用 scripts/fetch-models.sh 拉）
 web/public/models/
