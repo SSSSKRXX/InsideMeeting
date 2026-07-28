@@ -119,7 +119,41 @@ case "$ans" in
 esac
 
 echo ""
-git push origin main
+if git push origin main 2>&1 | tee /tmp/im-push.log; then
+  :
+fi
+
+# 远端有本地没有的提交时 git 会拒绝推送。
+# 最常见的原因是建仓库时勾了「Add a README」，GitHub 自动生成了一个初始提交。
+if grep -q "rejected\|fetch first\|non-fast-forward" /tmp/im-push.log; then
+  echo ""
+  echo "--- 推送被拒绝：远端有本地没有的提交 ---"
+  git fetch origin --quiet 2>/dev/null || true
+  echo ""
+  echo "远端现有的提交："
+  git log --oneline origin/main 2>/dev/null | head -10 || echo "  （读不到，可能是新仓库）"
+  echo ""
+  echo "如果上面只有 GitHub 自动生成的 Initial commit，覆盖掉就行。"
+  echo "如果里面有你自己的东西，先选 n，手动处理。"
+  echo ""
+  read -p "用本地内容覆盖远端？[y/N] " force
+  case "$force" in
+    [yY])
+      git push -f origin main
+      echo ""
+      echo "已覆盖推送完成。"
+      ;;
+    *)
+      echo ""
+      echo "已取消。想手动合并远端内容："
+      echo "  git pull --rebase origin main --allow-unrelated-histories"
+      echo "  # 有冲突就改完 git add，然后 git rebase --continue"
+      echo "  git push origin main"
+      exit 1
+      ;;
+  esac
+fi
+
 echo ""
 echo "=================================================="
 echo "  完成：https://github.com/SSSSKRXX/InsideMeeting"
