@@ -138,7 +138,34 @@ export default function Archive({ meetingId, onBack }) {
                 <button className="ghost" onClick={() => process({ skipSummary: true, force: true })} disabled={job?.state === 'running'}>
                   只出逐字稿
                 </button>
+                {detail.summary && (
+                  <button
+                    className="ghost"
+                    onClick={async () => {
+                      setErr('');
+                      const r = await fetch(`/api/meetings/${current}/notify`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: '{}',
+                      }).then((x) => x.json());
+                      if (r.skipped) setErr(r.skipped);
+                      else if (r.failed?.length) setErr(`部分渠道失败：${r.failed.map((f) => `${f.channel}(${f.error})`).join('；')}`);
+                      else setErr(`已推送到：${(r.sent || []).join('、') || '（没有已配置的渠道）'}`);
+                      loadDetail(current);
+                    }}
+                  >
+                    推送纪要
+                  </button>
+                )}
               </div>
+
+              {detail.notified && (
+                <p className="hint">
+                  上次推送：{new Date(detail.notified.at).toLocaleString('zh-CN', { hour12: false })}
+                  {detail.notified.sent?.length ? ` · 成功 ${detail.notified.sent.join('、')}` : ''}
+                  {detail.notified.failed?.length ? ` · 失败 ${detail.notified.failed.join('、')}` : ''}
+                </p>
+              )}
 
               {job && job.state !== 'idle' && (
                 <div className={`job ${job.state}`}>

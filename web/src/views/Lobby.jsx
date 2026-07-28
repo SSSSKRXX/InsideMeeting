@@ -12,7 +12,23 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
   const [camId, setCamId] = useState('');
   const [error, setError] = useState('');
   const [stream, setStream] = useState(null);
+  const [denoise, setDenoise] = useState(true);
+  const [roomInfo, setRoomInfo] = useState(null);
   const videoRef = useRef(null);
+
+  // 房间号变了就去问一下这个房间要不要密码、有没有等候室，
+  // 免得人填完一堆东西点进去才被弹回来
+  useEffect(() => {
+    const id = roomId.trim();
+    if (!id) return setRoomInfo(null);
+    const t = setTimeout(() => {
+      fetch(`/api/rooms/${encodeURIComponent(id)}/settings`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then(setRoomInfo)
+        .catch(() => setRoomInfo(null));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [roomId]);
 
   // 预览本地画面并列出设备
   useEffect(() => {
@@ -51,7 +67,7 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
       name: name.trim(),
       roomId: roomId.trim(),
       password,
-      prefs: { camOn, micOn, micId, camId },
+      prefs: { camOn, micOn, micId, camId, denoise },
     });
   };
 
@@ -92,12 +108,30 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
             />
           </label>
 
-          {serverConfig.needPassword && (
+          {(serverConfig.needPassword || roomInfo?.hasPassword) && (
             <label>
-              入会口令
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              {roomInfo?.hasPassword ? '房间密码' : '入会口令'}
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={roomInfo?.hasPassword ? '这个房间设了密码' : ''}
+              />
             </label>
           )}
+
+          {roomInfo && (roomInfo.waitingRoom || roomInfo.locked || roomInfo.hostName) && (
+            <div className="room-hint">
+              {roomInfo.locked && <b>此会议已被锁定，暂时无法加入。</b>}
+              {!roomInfo.locked && roomInfo.waitingRoom && <span>此房间启用了等候室，进入后需要主持人允许。</span>}
+              {roomInfo.hostName && <span className="muted"> 主持人：{roomInfo.hostName}</span>}
+            </div>
+          )}
+
+          <label className="inline-check">
+            <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />
+            <span>入会后开启增强降噪（压掉空调声和底噪，对会议纪要准确率有帮助）</span>
+          </label>
 
           <details className="devices">
             <summary>设备选择</summary>
