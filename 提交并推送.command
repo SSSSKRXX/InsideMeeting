@@ -93,6 +93,25 @@ commit_batch "feat(web): 前端接入新功能
 - 会议记录页增加手动推送纪要" \
   web/src/views web/src/styles.css web/src/lib
 
+commit_batch "feat(admin): 网页管理后台
+
+服务状态、房间密码管理、磁盘占用与清理、配置总览、日志查看。
+全部走 ADMIN_TOKEN 鉴权。
+
+两个刻意的保守设计：
+- 清理默认只删音视频，保留纪要和逐字稿（纯文本不占空间但删了拿不回来）
+- 清理按钮默认先跑预演，确认后才真删" \
+  server/src/admin.js web/src/views/Admin.jsx
+
+commit_batch "feat(tray): Mac 菜单栏程序管理服务启停
+
+不用再开终端。启停重启、看在会人数、一键复制入会地址
+（优先 Tailscale 的 100.x 段）、开机自启、看日志。
+
+服务本身仍是独立的 node 进程——菜单栏程序只是控制它，
+所以终端/launchd/菜单栏三种启动方式随时可换，不会互相锁死。" \
+  tray 打包桌面程序.command
+
 commit_batch "chore: 配置与文档
 
 - .env.example 补充推送渠道和房间安全相关配置

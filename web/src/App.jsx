@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import Lobby from './views/Lobby.jsx';
 import Room from './views/Room.jsx';
 import Archive from './views/Archive.jsx';
+import Admin from './views/Admin.jsx';
 
 function parseHash() {
   const h = window.location.hash.replace(/^#\/?/, '');
   if (h.startsWith('room/')) return { view: 'room', roomId: decodeURIComponent(h.slice(5)) };
   if (h.startsWith('archive')) return { view: 'archive', meetingId: decodeURIComponent(h.split('/')[1] || '') };
+  if (h.startsWith('admin')) return { view: 'admin' };
   return { view: 'lobby' };
 }
 
@@ -65,6 +67,10 @@ export default function App() {
 
   if (route.view === 'archive') {
     return <Archive meetingId={route.meetingId} onBack={() => navigate('/')} />;
+  }
+
+  if (route.view === 'admin') {
+    return <Admin onBack={() => navigate('/')} />;
   }
 
   return (
