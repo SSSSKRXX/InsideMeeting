@@ -3,11 +3,21 @@ import { Server } from 'socket.io';
 import { config, iceServers } from './config.js';
 import { ensureMeeting, updateMeeting } from './store.js';
 import { endLive, liveState } from './live.js';
+import {
+  publicSettings,
+  checkPassword,
+  setPassword,
+  updateRoom,
+  issueHostToken,
+  checkHostToken,
+  getRoom,
+} from './roomstore.js';
 
-/** roomId -> { meetingId, startedAt, peers: Map<socketId, Peer>, endTimer } */
+/** roomId -> { meetingId, startedAt, peers: Map, waiting: Map, hostPeerId, endTimer } */
 const rooms = new Map();
 
-const MEETING_GRACE_MS = 2 * 60 * 1000; // 全员离开 2 分钟后才判定会议结束
+const MEETING_GRACE_MS = 2 * 60 * 1000;
+const WAIT_TIMEOUT_MS = 5 * 60 * 1000; // 等候超过 5 分钟自动放弃
 
 function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
@@ -18,12 +28,20 @@ function safeRoomId(raw) {
   return String(raw || '').trim().replace(/[^\w一-龥-]/g, '').slice(0, 40);
 }
 
-function getRoom(roomId) {
+function getLiveRoom(roomId) {
   let room = rooms.get(roomId);
   if (!room) {
     const startedAt = Date.now();
     const meetingId = `${roomId}_${stamp(new Date(startedAt))}`;
-    room = { roomId, meetingId, startedAt, peers: new Map(), endTimer: null };
+    room = {
+      roomId,
+      meetingId,
+      startedAt,
+      peers: new Map(),   // socketId -> peer
+      waiting: new Map(), // socketId -> { peerId, name, socket, at, timer }
+      hostPeerId: null,
+      endTimer: null,
+    };
     rooms.set(roomId, room);
     ensureMeeting(meetingId, { roomId, startedAt });
   }
@@ -44,6 +62,7 @@ function publicPeer(p) {
     handRaised: p.handRaised,
     joinedAt: p.joinedAt,
     recording: p.recording,
+    isHost: p.isHost,
   };
 }
 
@@ -53,7 +72,68 @@ function roomSnapshot(room) {
     meetingId: room.meetingId,
     startedAt: room.startedAt,
     peers: [...room.peers.values()].map(publicPeer),
+    settings: publicSettings(room.roomId),
   };
+}
+
+function waitingList(room) {
+  return [...room.waiting.values()].map((w) => ({ peerId: w.peerId, name: w.name, at: w.at }));
+}
+
+function notifyHostOfWaiting(io, room) {
+  const list = waitingList(room);
+  for (const p of room.peers.values()) {
+    if (p.isHost) io.to(p.socketId).emit('waiting-list', { list });
+  }
+}
+
+/** 主持人离开后，把主持人身份交给最早进来的人，避免会议失去控制 */
+function reassignHost(io, room) {
+  const remaining = [...room.peers.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+  const next = remaining[0];
+  room.hostPeerId = next ? next.peerId : null;
+  if (next) {
+    next.isHost = true;
+    const token = issueHostToken(room.roomId, next.name);
+    io.to(next.socketId).emit('host-granted', { token, reason: '原主持人已离开' });
+    io.to(room.roomId).emit('peer-state', { peerId: next.peerId, patch: publicPeer(next) });
+    notifyHostOfWaiting(io, room);
+  }
+}
+
+/** 把等候室里的人放进会议。admit-peer 和「关闭等候室」都走这里。 */
+function admitWaiting(io, room, entries) {
+  for (const w of entries) {
+    clearTimeout(w.timer);
+    room.waiting.delete(w.socket.id);
+
+    const wsock = w.socket;
+    wsock.join(room.roomId);
+    room.peers.set(wsock.id, w.peer);
+    w.onAdmit?.(room, w.peer);
+
+    updateMeeting(room.meetingId, (m) => {
+      m.participants[w.peer.peerId] = { name: w.peer.name, joinedAt: Date.now(), leftAt: null };
+      m.chat.push({ t: Date.now(), system: true, text: `${w.peer.name} 加入了会议` });
+      return m;
+    });
+
+    const existing = [...room.peers.values()].filter((p) => p.socketId !== wsock.id);
+    wsock.emit('admitted', {
+      self: publicPeer(w.peer),
+      room: roomSnapshot(room),
+      iceServers: iceServers(),
+      settings: {
+        segmentMinutes: config.recording.segmentMinutes,
+        chunkSeconds: config.recording.chunkSeconds,
+        recordVideoDefault: config.recording.recordVideoDefault,
+      },
+      initiateTo: existing.map((p) => p.peerId),
+      live: liveState(room.meetingId),
+    });
+    wsock.to(room.roomId).emit('peer-joined', { peer: publicPeer(w.peer) });
+  }
+  notifyHostOfWaiting(io, room);
 }
 
 function scheduleEnd(room) {
@@ -65,6 +145,7 @@ function scheduleEnd(room) {
       return m;
     });
     endLive(room.meetingId);
+    for (const w of room.waiting.values()) clearTimeout(w.timer);
     rooms.delete(room.roomId);
   }, MEETING_GRACE_MS);
 }
@@ -78,37 +159,18 @@ export function attachSignaling(httpServer) {
   io.on('connection', (socket) => {
     let joined = null; // { room, peer }
 
-    socket.on('join', (payload = {}, ack = () => {}) => {
-      const roomId = safeRoomId(payload.roomId);
-      const name = String(payload.name || '').trim().slice(0, 24) || '匿名';
-
-      if (!roomId) return ack({ ok: false, error: '房间号无效' });
-      if (config.joinPassword && payload.password !== config.joinPassword) {
-        return ack({ ok: false, error: '入会口令错误' });
-      }
-
-      const room = getRoom(roomId);
-      const peer = {
-        peerId: randomUUID().slice(0, 8),
-        socketId: socket.id,
-        name,
-        muted: Boolean(payload.muted),
-        videoOn: Boolean(payload.videoOn),
-        sharing: false,
-        handRaised: false,
-        recording: false,
-        joinedAt: Date.now(),
-      };
+    /** 真正把人放进会议 */
+    function admit(room, peer, ack) {
       room.peers.set(socket.id, peer);
-      socket.join(roomId);
+      socket.join(room.roomId);
       joined = { room, peer };
 
       updateMeeting(room.meetingId, (m) => {
         m.participants[peer.peerId] = { name: peer.name, joinedAt: peer.joinedAt, leftAt: null };
+        m.chat.push({ t: Date.now(), system: true, text: `${peer.name} 加入了会议` });
         return m;
       });
 
-      // 已在房间里的人：由「后进来的人」发起 offer，避免双方同时 offer
       const existing = [...room.peers.values()].filter((p) => p.socketId !== socket.id);
 
       ack({
@@ -122,18 +184,159 @@ export function attachSignaling(httpServer) {
           recordVideoDefault: config.recording.recordVideoDefault,
         },
         initiateTo: existing.map((p) => p.peerId),
-        // 中途加入的人立刻拿到前面已经聊过的实时纪要，不用问"刚才说到哪了"
         live: liveState(room.meetingId),
+        hostToken: peer.hostToken || null,
+        waiting: peer.isHost ? waitingList(room) : [],
       });
 
-      socket.to(roomId).emit('peer-joined', { peer: publicPeer(peer) });
-      updateMeeting(room.meetingId, (m) => {
-        m.chat.push({ t: Date.now(), system: true, text: `${peer.name} 加入了会议` });
-        return m;
-      });
+      socket.to(room.roomId).emit('peer-joined', { peer: publicPeer(peer) });
+    }
+
+    socket.on('join', (payload = {}, ack = () => {}) => {
+      const roomId = safeRoomId(payload.roomId);
+      const name = String(payload.name || '').trim().slice(0, 24) || '匿名';
+
+      if (!roomId) return ack({ ok: false, error: '房间号无效' });
+
+      // 全局口令（.env 里的 JOIN_PASSWORD）——所有房间通用的第一道门
+      if (config.joinPassword && payload.globalPassword !== config.joinPassword) {
+        return ack({ ok: false, error: '入会口令错误', reason: 'global-password' });
+      }
+
+      const settings = publicSettings(roomId);
+      const room = getLiveRoom(roomId);
+      const cfg = getRoom(roomId);
+      const everHadHost = (cfg.hostTokenHashes?.length || 0) > 0 || Boolean(cfg.hostTokenHash);
+      const isFirstEver = room.peers.size === 0 && !everHadHost;
+      const claimsHost = checkHostToken(roomId, payload.hostToken);
+
+      // 房间密码
+      if (settings.hasPassword && !claimsHost && !checkPassword(roomId, payload.password)) {
+        return ack({ ok: false, error: '房间密码错误', reason: 'room-password' });
+      }
+
+      // 会议已锁定
+      if (settings.locked && !claimsHost) {
+        return ack({ ok: false, error: '会议已被主持人锁定，暂不接受新成员', reason: 'locked' });
+      }
+
+      const peerId = randomUUID().slice(0, 8);
+      const becomesHost = claimsHost || isFirstEver || room.peers.size === 0;
+
+      const peer = {
+        peerId,
+        socketId: socket.id,
+        name,
+        muted: Boolean(payload.muted),
+        videoOn: Boolean(payload.videoOn),
+        sharing: false,
+        handRaised: false,
+        recording: false,
+        isHost: becomesHost,
+        joinedAt: Date.now(),
+      };
+
+      if (becomesHost) {
+        room.hostPeerId = peerId;
+        peer.hostToken = issueHostToken(roomId, name);
+      }
+
+      // 等候室：不是主持人就先在门外等着
+      if (settings.waitingRoom && !becomesHost) {
+        const entry = {
+          peerId,
+          name,
+          socket,
+          peer,
+          at: Date.now(),
+          // 关键：被放行时要在「等候者自己的连接上下文」里设置 joined，
+          // 否则他之后发的 signal / chat / state 都会因为 joined 为空被丢掉。
+          onAdmit: (r, p) => {
+            joined = { room: r, peer: p };
+          },
+          timer: setTimeout(() => {
+            room.waiting.delete(socket.id);
+            socket.emit('waiting-timeout');
+            notifyHostOfWaiting(io, room);
+          }, WAIT_TIMEOUT_MS),
+        };
+        room.waiting.set(socket.id, entry);
+        notifyHostOfWaiting(io, room);
+        return ack({
+          ok: false,
+          waiting: true,
+          peerId,
+          error: '正在等待主持人允许你加入',
+          reason: 'waiting-room',
+          hostName: settings.hostName,
+        });
+      }
+
+      admit(room, peer, ack);
     });
 
-    // WebRTC 信令中转（offer / answer / candidate 原样透传）
+    // ---------- 主持人操作 ----------
+
+    function requireHost() {
+      if (!joined?.peer?.isHost) {
+        socket.emit('op-denied', { error: '只有主持人可以执行这个操作' });
+        return null;
+      }
+      return joined;
+    }
+
+    socket.on('admit-peer', ({ peerId, all } = {}) => {
+      const j = requireHost();
+      if (!j) return;
+      const { room } = j;
+      const targets = all
+        ? [...room.waiting.values()]
+        : [...room.waiting.values()].filter((w) => w.peerId === peerId);
+      admitWaiting(io, room, targets);
+    });
+
+    socket.on('deny-peer', ({ peerId } = {}) => {
+      const j = requireHost();
+      if (!j) return;
+      const { room } = j;
+      for (const w of [...room.waiting.values()]) {
+        if (w.peerId !== peerId) continue;
+        clearTimeout(w.timer);
+        room.waiting.delete(w.socket.id);
+        w.socket.emit('denied', { error: '主持人拒绝了你的加入请求' });
+      }
+      notifyHostOfWaiting(io, room);
+    });
+
+    socket.on('kick-peer', ({ peerId } = {}) => {
+      const j = requireHost();
+      if (!j) return;
+      const target = [...j.room.peers.values()].find((p) => p.peerId === peerId);
+      if (!target || target.isHost) return;
+      io.to(target.socketId).emit('kicked', { by: j.peer.name });
+      const s = io.sockets.sockets.get(target.socketId);
+      s?.leave(j.room.roomId);
+      j.room.peers.delete(target.socketId);
+      io.to(j.room.roomId).emit('peer-left', { peerId });
+    });
+
+    socket.on('room-settings', (patch = {}, ack = () => {}) => {
+      const j = requireHost();
+      if (!j) return ack({ ok: false, error: '需要主持人权限' });
+      const { room } = j;
+      if ('password' in patch) setPassword(room.roomId, patch.password);
+      updateRoom(room.roomId, patch);
+      const s = publicSettings(room.roomId);
+      io.to(room.roomId).emit('room-settings', s);
+      // 关掉等候室时，把还在门外等的人一次性全放进来
+      if (patch.waitingRoom === false && room.waiting.size) {
+        admitWaiting(io, room, [...room.waiting.values()]);
+      }
+      ack({ ok: true, settings: s });
+    });
+
+    // ---------- WebRTC 信令 ----------
+
     socket.on('signal', ({ to, data } = {}) => {
       if (!joined || !to) return;
       const target = [...joined.room.peers.values()].find((p) => p.peerId === to);
@@ -165,7 +368,6 @@ export function attachSignaling(httpServer) {
       });
     });
 
-    // 实时字幕（前端浏览器本地识别的结果，广播给所有人）
     socket.on('caption', ({ text, final } = {}) => {
       if (!joined || !text) return;
       io.to(joined.room.roomId).emit('caption', {
@@ -177,7 +379,6 @@ export function attachSignaling(httpServer) {
       });
     });
 
-    // 录制开关：任何人点「开始录制」，全房间同步开始录各自的音轨
     socket.on('rec-control', ({ on } = {}) => {
       if (!joined) return;
       io.to(joined.room.roomId).emit('rec-control', {
@@ -191,7 +392,6 @@ export function attachSignaling(httpServer) {
       });
     });
 
-    // 主持人操作：请求某人静音
     socket.on('request-mute', ({ peerId } = {}) => {
       if (!joined) return;
       const target = [...joined.room.peers.values()].find((p) => p.peerId === peerId);
@@ -199,6 +399,16 @@ export function attachSignaling(httpServer) {
     });
 
     const cleanup = () => {
+      // 还在等候室里就断开的情况
+      for (const room of rooms.values()) {
+        const w = room.waiting.get(socket.id);
+        if (w) {
+          clearTimeout(w.timer);
+          room.waiting.delete(socket.id);
+          notifyHostOfWaiting(io, room);
+        }
+      }
+
       if (!joined) return;
       const { room, peer } = joined;
       room.peers.delete(socket.id);
@@ -208,6 +418,7 @@ export function attachSignaling(httpServer) {
         m.chat.push({ t: Date.now(), system: true, text: `${peer.name} 离开了会议` });
         return m;
       });
+      if (peer.isHost) reassignHost(io, room);
       scheduleEnd(room);
       joined = null;
     };
@@ -220,7 +431,10 @@ export function attachSignaling(httpServer) {
 }
 
 export function activeRooms() {
-  return [...rooms.values()].map(roomSnapshot);
+  return [...rooms.values()].map((r) => ({
+    ...roomSnapshot(r),
+    waitingCount: r.waiting.size,
+  }));
 }
 
 export function meetingIdForRoom(roomId) {
