@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mac mini 开机自启配置。
+
+  安装：
+    1. 把下面的 /Users/YOURNAME/InsideMeeting 改成项目实际路径
+    2. 确认 node 路径：which node（Apple 芯片通常是 /opt/homebrew/bin/node）
+    3. cp deploy/com.inside.meeting.plist ~/Library/LaunchAgents/
+    4. launchctl load ~/Library/LaunchAgents/com.inside.meeting.plist
+  查看日志：tail -f ~/InsideMeeting/data/server.log
+  停止：    launchctl unload ~/Library/LaunchAgents/com.inside.meeting.plist
+
+  另外建议在「系统设置 → 电池/节能」里关闭自动睡眠，
+  或执行：sudo pmset -a sleep 0 disksleep 0
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.inside.meeting</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/YOURNAME/InsideMeeting/server/src/index.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOURNAME/InsideMeeting</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOURNAME/InsideMeeting/data/server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOURNAME/InsideMeeting/data/server.err.log</string>
+</dict>
+</plist>

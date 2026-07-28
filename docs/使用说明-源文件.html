@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 16mm;
+    @bottom-center {
+      content: "InsideMeeting 使用说明 · 第 " counter(page) " 页 / 共 " counter(pages) " 页";
+      font-family: "Noto Sans CJK SC"; font-size: 8.5pt; color: #999;
+    }
+  }
+  body {
+    font-family: "Noto Sans CJK SC", sans-serif;
+    font-size: 10.5pt; line-height: 1.75; color: #1a1a1a; margin: 0;
+  }
+  h1 { font-size: 22pt; margin: 0 0 4px; letter-spacing: -0.5px; }
+  .sub { color: #666; font-size: 10.5pt; margin: 0 0 20px; }
+  h2 {
+    font-size: 14pt; margin: 26px 0 10px; padding-bottom: 6px;
+    border-bottom: 2px solid #1a1a1a; page-break-after: avoid;
+  }
+  h3 { font-size: 11.5pt; margin: 18px 0 6px; page-break-after: avoid; }
+  p { margin: 7px 0; }
+  ul, ol { margin: 7px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  .lead { font-size: 11pt; color: #333; }
+
+  .box {
+    border: 1px solid #d5d5d5; border-radius: 5px; padding: 12px 15px;
+    margin: 14px 0; page-break-inside: avoid; background: #fafafa;
+  }
+  .box.fill { background: #fff8e6; border-color: #e8c97a; }
+  .box.warn { background: #fdf0ef; border-color: #e5a9a4; }
+  .box.tip  { background: #eef5fb; border-color: #a8c8e8; }
+  .box p:first-child { margin-top: 0; }
+  .box p:last-child { margin-bottom: 0; }
+  .box .bt { font-weight: bold; display: block; margin-bottom: 4px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 9.5pt; page-break-inside: avoid; }
+  table.long { page-break-inside: auto; }
+  table.long tr { page-break-inside: avoid; }
+  table.long thead { display: table-header-group; }
+  th, td { border: 1px solid #ddd; padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; font-weight: bold; }
+  td.k { width: 32%; font-weight: bold; }
+
+  .fill-line { display: inline-block; min-width: 200px; border-bottom: 1px solid #999; }
+  code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 9.5pt; }
+  .step { font-weight: bold; color: #1a1a1a; }
+  .muted { color: #777; font-size: 9.5pt; }
+
+  .ui {
+    border: 1.5px solid #333; border-radius: 5px; margin: 14px 0;
+    font-size: 8.5pt; page-break-inside: avoid; overflow: hidden;
+  }
+  .ui-row { border-bottom: 1px solid #ccc; padding: 6px 9px; }
+  .ui-row:last-child { border-bottom: 0; }
+  .ui-main { display: table; width: 100%; }
+  .ui-l, .ui-r { display: table-cell; padding: 9px; vertical-align: top; }
+  .ui-l { width: 62%; border-right: 1px solid #ccc; }
+  .ui-tile {
+    box-sizing: border-box;
+    display: inline-block; width: 47%; border: 1px solid #bbb; border-radius: 3px;
+    padding: 14px 4px; text-align: center; margin: 2px 1%; background: #f6f6f6;
+  }
+  .ui-tile.hi { border: 2px solid #2b8a3e; background: #eef8f0; }
+  .ann { color: #666; font-size: 8pt; }
+  .pill { border: 1px solid #999; border-radius: 10px; padding: 1px 8px; margin-right: 4px; display: inline-block; }
+  .pill.on { background: #333; color: #fff; border-color: #333; }
+  .nb { page-break-inside: avoid; }
+  .toc { columns: 2; column-gap: 24px; font-size: 10pt; }
+  .toc div { margin: 3px 0; break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<h1>InsideMeeting 使用说明</h1>
+<p class="sub">内部会议系统 · 不限时长 · 自动生成会议纪要</p>
+
+<p class="lead">这是我们自己搭的内部会议系统，替代腾讯会议 / Zoom。和它们比，有三点不一样：</p>
+
+<ul>
+  <li><b>不限时长</b>。没有 40 分钟踢人，没有人数套餐。</li>
+  <li><b>自动出会议纪要</b>。会议进行中右侧就能看到实时纪要；会后系统会生成完整的逐字稿和纪要，而且会写清楚每条结论是谁说的。</li>
+  <li><b>录像存在公司自己的机器上</b>，不上传到任何第三方云盘。</li>
+</ul>
+
+<div class="box fill">
+  <span class="bt">开始之前，请先把这两项信息填上（管理员会告诉你）</span>
+  <p>会议网址：<span class="fill-line"></span></p>
+  <p>Tailscale 登录方式：<span class="fill-line"></span></p>
+</div>
+
+<h2>目录</h2>
+<div class="toc">
+  <div>一、第一次使用（只需做一次）</div>
+  <div>二、怎么进入一场会议</div>
+  <div>三、认识会议界面</div>
+  <div>四、会议中的各项功能</div>
+  <div>五、录制与会议纪要</div>
+  <div>六、用手机参会</div>
+  <div>七、六条重要提醒</div>
+  <div>八、遇到问题怎么办</div>
+</div>
+
+<h2>一、第一次使用（只需做一次）</h2>
+
+<p>因为这套系统只对公司内部开放，不在公网上，所以你需要先装一个叫 <b>Tailscale</b> 的小软件。它的作用是把大家的电脑连进同一个内部网络——装好之后你平时上网完全不受影响，可以一直开着。</p>
+
+<h3>第 1 步：下载安装 Tailscale</h3>
+
+<p>打开 <code>https://tailscale.com/download</code>，网站会自动识别你的设备，点大按钮下载即可。也可以按下表操作：</p>
+
+<table>
+  <tr><th>你的设备</th><th>怎么装</th></tr>
+  <tr><td class="k">Windows 电脑</td><td>访问上面的网址，下载 <code>.msi</code> 文件，双击一路点「下一步」。装完右下角任务栏会出现一个小图标。</td></tr>
+  <tr><td class="k">Mac 电脑</td><td>访问上面的网址下载，或直接在 App Store 搜索「Tailscale」安装。装完右上角菜单栏会出现一个小图标。</td></tr>
+  <tr><td class="k">iPhone / iPad</td><td>在 App Store 搜索「Tailscale」，认准蓝色的字母 logo，直接安装。</td></tr>
+  <tr><td class="k">安卓手机</td><td>在应用商店搜索「Tailscale」；搜不到就用上面的网址下载安装包。</td></tr>
+</table>
+
+<h3>第 2 步：登录</h3>
+
+<p>打开 Tailscale，它会让你选择登录方式（Google、微软账号等）。<b>请使用管理员告诉你的那种登录方式</b>，用错账号会连不进来。</p>
+
+<p>登录后可能会显示「等待管理员批准」。这是正常的，通知管理员一声，他点一下就通过了。</p>
+
+<h3>第 3 步：确认装好了</h3>
+
+<div class="box tip">
+  <span class="bt">怎么判断装好了没有</span>
+  <p>看 Tailscale 的图标或界面上是否显示 <b>Connected</b>（已连接）。Windows 在右下角任务栏，Mac 在右上角菜单栏，手机上打开 App 就能看到一个开关，确保它是打开的。</p>
+</div>
+
+<div class="box warn">
+  <span class="bt">重要：Tailscale 要保持开启</span>
+  <p>关掉 Tailscale 就进不了会议了。它很省电，建议一直开着，开机自动启动。如果哪天突然打不开会议网址，第一件事就是检查它是不是被关掉了。</p>
+</div>
+
+<h3>第 4 步：打开会议网址，存成书签</h3>
+
+<p>用 <b>Chrome 或 Edge 浏览器</b>打开本文开头填的那个会议网址（Safari 也能用，但建议优先用 Chrome）。能看到入会页面就说明一切正常。<b>把它加到收藏夹</b>，以后开会直接点。</p>
+
+<h2>二、怎么进入一场会议</h2>
+
+<p>打开会议网址后，你会看到一个页面，左边是你的摄像头预览，右边要填两项：</p>
+
+<table>
+  <tr><td class="k">你的姓名</td><td><b>请填真实姓名</b>。这个名字会直接出现在会议纪要里，比如「@张三 确认接口周三交付」。填「abc」或者「测试」，纪要里就会出现「@abc 说……」，别人看不懂。</td></tr>
+  <tr><td class="k">房间号</td><td>由会议发起人指定，比如 <code>weekly</code>、<code>产品评审</code>。<b>填一样的房间号就会进同一个会</b>，没有别的加入方式。</td></tr>
+</table>
+
+<p>下面还可以先关掉摄像头或麦克风再进去，以及在「设备选择」里挑用哪个麦克风、哪个摄像头。填好点<b>加入会议</b>。</p>
+
+<div class="box tip">
+  <span class="bt">怎么邀请别人</span>
+  <p>进会后点右上角的<b>复制入会链接</b>，把链接发给对方即可，对方打开就是同一个房间。或者直接口头告诉他房间号。</p>
+</div>
+
+<h2>三、认识会议界面</h2>
+
+<div class="ui">
+  <div class="ui-row">
+    <b>产品评审</b> &nbsp; 42:17 &nbsp; <span style="color:#c0392b">● 录制中 第 1 段</span> &nbsp; <span style="color:#2b8a3e">实时纪要</span>
+    <span style="float:right"><span class="pill on">自动</span><span class="pill">画廊</span><span class="pill">演讲者</span></span>
+  </div>
+  <div class="ui-main">
+    <div class="ui-l">
+      <div class="ui-tile hi">张三<br /><span class="ann">正在说话（绿框）</span></div>
+      <div class="ui-tile">李四<br /><span class="ann">已静音</span></div>
+      <div class="ui-tile">王五<br /><span class="ann">举手中</span></div>
+      <div class="ui-tile">你自己</div>
+    </div>
+    <div class="ui-r">
+      <b>实时纪要</b> | 成员 | 聊天<br />
+      <span class="ann">摘要更新于 14:32</span>
+      <p style="margin:6px 0 2px"><b>目前在聊什么</b><br /><span class="ann">· 下季度排期与接口交付</span></p>
+      <p style="margin:6px 0 2px"><b>已经明确的</b><br /><span class="ann">· @张三 确认接口周三交付</span></p>
+      <p style="margin:6px 0 2px"><b>出现的待办</b><br /><span class="ann">· @李四：周四开始联调</span></p>
+    </div>
+  </div>
+  <div class="ui-row" style="border-top:1px solid #ccc; border-bottom:0">
+    <span class="pill">麦克风</span><span class="pill">摄像头</span><span class="pill">共享屏幕</span><span class="pill">开始录制</span><span class="pill">举手</span>
+    <span style="float:right"><span class="pill">离开</span></span>
+  </div>
+</div>
+
+<ul>
+  <li><b>顶部</b>：房间名、已开多久、是否正在录制、右侧是画面布局切换。</li>
+  <li><b>中间</b>：所有参会者的画面。<b>谁在说话，谁的边框就会变绿</b>。</li>
+  <li><b>右侧</b>：三个标签页——实时纪要、成员列表、文字聊天。</li>
+  <li><b>底部</b>：麦克风、摄像头、共享屏幕、录制、举手、离开。</li>
+</ul>
+
+<h2>四、会议中的各项功能</h2>
+
+<h3>麦克风和摄像头</h3>
+<p>底部前两个按钮，点一下开、再点一下关。按钮变红色代表已经关闭。别人的画面右下角会显示一个静音标记，你能看出谁静音了。</p>
+
+<h3>共享屏幕</h3>
+<p>点底部的<b>共享屏幕</b>，浏览器会弹窗让你选择共享<b>整个屏幕</b>、<b>某个窗口</b>还是<b>某个浏览器标签页</b>。</p>
+<ul>
+  <li>演示 PPT、演示软件 → 选「整个屏幕」或「窗口」。</li>
+  <li>放视频、需要对方听到声音 → 选「标签页」，并勾选左下角的<b>「共享标签页音频」</b>，否则对方只能看到画面听不到声音。</li>
+</ul>
+<p>一旦有人开始共享，<b>所有人的画面会自动切到共享内容</b>，不需要任何人手动操作。共享结束后自动切回。</p>
+
+<h3>切换画面布局</h3>
+<table>
+  <tr><td class="k">自动（默认）</td><td>有人共享屏幕就显示共享内容，没人共享就平铺显示所有人。日常用这个就行。</td></tr>
+  <tr><td class="k">画廊</td><td>永远平铺显示所有人，哪怕有人正在共享。适合想看清每个人表情的场合。</td></tr>
+  <tr><td class="k">演讲者</td><td>大画面自动跟着当前说话的人切换，其他人缩在下方一条。适合有人长时间讲的会。</td></tr>
+</table>
+<p><b>双击任何一个人的画面可以把他固定在大画面上</b>，再双击一次取消。固定之后就不再自动跟随了。</p>
+
+<h3>举手</h3>
+<p>点底部的<b>举手</b>，你的画面上会出现一个举手标记，所有人都能看到。发言完记得再点一次放下。</p>
+
+<h3>文字聊天</h3>
+<p>右侧「聊天」标签页。发链接、发编号这类不方便念的内容用它最方便。聊天记录会一并存进会议记录。</p>
+
+<h3>请别人静音</h3>
+<p>右侧「成员」标签页，每个人后面有「请他静音」。<b>这是发一个提醒给对方，不是强制</b>——对方会收到提示，由他自己决定要不要静音。用来提醒忘记静音的同事很方便。</p>
+
+<h2>五、录制与会议纪要</h2>
+
+<h3>开始录制</h3>
+
+<div class="box warn">
+  <span class="bt">重要：录制是全员一起的</span>
+  <p>任何人点<b>开始录制</b>，房间里<b>所有人</b>都会同时开始录各自的声音。这是故意这么设计的——每个人的声音单独录一条，系统才知道每句话是谁说的。</p>
+  <p>反过来说，<b>谁没在录，纪要里就没有谁</b>。所以录制期间请不要中途退出再进来。</p>
+</div>
+
+<p>录制开始后，顶部会出现红色的「● 录制中」。录制没有时长限制，开多久录多久，文件每 60 分钟自动分成一段，你不需要做任何操作。</p>
+
+<h3>会议中看实时纪要</h3>
+<p>右侧「实时纪要」标签页，默认就是开着的。你会看到：</p>
+<ul>
+  <li><b>上半部分</b>：每分钟自动刷新一次的摘要，分成「目前在聊什么 / 已经明确的 / 出现的待办 / 分歧与待确认」四块。</li>
+  <li><b>下半部分</b>：展开后是滚动的逐字记录，大约延迟 20 秒。</li>
+</ul>
+
+<div class="box tip">
+  <span class="bt">中途加入会议不用问「刚才说到哪了」</span>
+  <p>你一进来，右侧就会自动显示这场会前面的全部内容和最新摘要，自己看一眼就跟上了。</p>
+</div>
+
+<p>实时纪要是<b>边开会边转文字</b>生成的，速度优先，偶尔会有识别错的地方（尤其是人名和专业术语），参考着看就行。会后那份更准。</p>
+
+<h3>会后拿完整纪要</h3>
+<p>会议结束后，在会议网址的<b>会议记录</b>页面找到这场会，点<b>生成逐字稿与会议纪要</b>。一场一小时的会大约几分钟出结果，包括：</p>
+<ul>
+  <li><b>会议纪要</b>：关键结论、分议题记录、待办表格，每条都标注了是谁说的。可以下载或一键复制全文。</li>
+  <li><b>逐字稿</b>：带时间戳的完整对话记录。</li>
+  <li><b>待办清单</b>：事项、负责人、截止时间。</li>
+  <li><b>发言统计</b>：每个人说了多久、多少轮。</li>
+  <li><b>录制文件</b>：可以在线播放或下载。</li>
+</ul>
+
+<p class="muted">如果发现纪要里某个人的名字写错了（通常是因为他入会时名字填错），在「录制文件」标签页点「改名」改掉，再点「仅重写纪要」即可，不需要重新处理一遍。</p>
+
+<h2>六、用手机参会</h2>
+
+<p>手机浏览器直接打开同一个会议网址就行，前提是手机上也装了 Tailscale 并保持开启。</p>
+
+<table>
+  <tr><th>功能</th><th>iPhone</th><th>安卓</th></tr>
+  <tr><td>视频通话、看别人共享的屏幕</td><td>可以</td><td>可以</td></tr>
+  <tr><td>看实时纪要、文字聊天、举手</td><td>可以</td><td>可以</td></tr>
+  <tr><td>录制自己的发言</td><td>可以</td><td>可以</td></tr>
+  <tr><td><b>自己发起</b>屏幕共享</td><td>不支持</td><td>不支持</td></tr>
+</table>
+
+<p>手机上的按钮只显示图标不显示文字，实时纪要和聊天收在底部，点工具栏的笔记图标弹出来。</p>
+
+<div class="box warn">
+  <span class="bt">手机参会最重要的一条：别锁屏、别切后台</span>
+  <p>手机一旦锁屏或者切到别的 App，系统会暂停录音，<b>你这段时间说的话不会进纪要</b>。如果你在会上要发言，请让浏览器一直停在前台。只是旁听不发言的话没关系。</p>
+</div>
+
+<h2>七、六条重要提醒</h2>
+
+<ol>
+  <li><b>每个人用自己的设备入会。</b> 两个人挤在一台电脑前用同一个麦克风，系统会把你俩认成同一个人，纪要里分不开。人在一个会议室也请各开各的设备（记得戴耳机）。</li>
+  <li><b>戴耳机。</b> 不戴耳机时，你的音箱放出来的别人的声音会被你的麦克风重新收进去，造成回声，也会污染纪要。</li>
+  <li><b>姓名填真名。</b> 纪要里的 @某某 直接取自你填的名字。</li>
+  <li><b>Tailscale 保持开启。</b> 关了就连不上。</li>
+  <li><b>电脑端优先用 Chrome 或 Edge。</b> 其它浏览器可能有功能缺失。</li>
+  <li><b>静音期间说的话不会被记录。</b> 这是正常的——要发言记得先取消静音。</li>
+</ol>
+
+<h2>八、遇到问题怎么办</h2>
+
+<table class="long">
+  <tr><th>症状</th><th>怎么办</th></tr>
+  <tr>
+    <td class="k">会议网址打不开</td>
+    <td>九成是 Tailscale 没开。检查它是否显示 Connected。还不行就退出 Tailscale 重新登录一次，或者联系管理员确认你的账号有没有被批准。</td>
+  </tr>
+  <tr>
+    <td class="k">浏览器提示「不安全」<br />或「您的连接不是私密连接」</td>
+    <td>如果管理员用的是自签证书，这个提示是正常的。点「高级」→「继续前往」即可，每台设备点一次就行。</td>
+  </tr>
+  <tr>
+    <td class="k">进不去，提示无法访问<br />摄像头 / 麦克风</td>
+    <td>浏览器地址栏左边有个小图标，点开把摄像头和麦克风权限改成「允许」，然后刷新页面。Mac 用户还需要检查「系统设置 → 隐私与安全性 → 麦克风」里是否勾选了浏览器。</td>
+  </tr>
+  <tr>
+    <td class="k">别人听不到我说话</td>
+    <td>①看底部麦克风按钮是不是红色（红色=已静音）；②在入会页的「设备选择」里换一个麦克风；③检查系统音量设置里的输入设备是否选对；④插拔一下耳机后刷新页面。</td>
+  </tr>
+  <tr>
+    <td class="k">我听不到别人</td>
+    <td>检查电脑音量、以及是否插着一个没在用的蓝牙耳机。刷新页面通常也能解决。</td>
+  </tr>
+  <tr>
+    <td class="k">看得到人但画面卡顿</td>
+    <td>让不发言的人关掉摄像头能明显改善。人多的时候（超过 6 人）对网络要求较高，也可以切到「演讲者」布局减轻负担。</td>
+  </tr>
+  <tr>
+    <td class="k">画面里有人一直显示<br />「connecting」连不上</td>
+    <td>让对方刷新一下页面重新进入。如果多个人都连不上他，通常是他那边的 Tailscale 有问题。</td>
+  </tr>
+  <tr>
+    <td class="k">有回声 / 啸叫</td>
+    <td>一定是有人没戴耳机。让大家依次静音排查，找到那个人让他戴上耳机或者静音。</td>
+  </tr>
+  <tr>
+    <td class="k">实时纪要一直没内容</td>
+    <td>确认右侧面板上的按钮显示「实时纪要运行中」。刚开会时需要积累一分钟左右才会出第一版摘要。</td>
+  </tr>
+  <tr>
+    <td class="k">纪要里少了某个人的发言</td>
+    <td>多半是他入会晚了没赶上开始录制，或者他中途退出过，或者他手机锁屏了。会后可以让他补充。</td>
+  </tr>
+</table>
+
+<div class="box fill">
+  <span class="bt">还是解决不了？</span>
+  <p>联系管理员：<span class="fill-line"></span></p>
+  <p class="muted">描述问题时请说明：用的什么设备、什么浏览器、Tailscale 是否显示已连接、以及大概什么时候出现的问题。</p>
+</div>
+
+</body>
+</html>

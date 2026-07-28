@@ -1,0 +1,23 @@
+node_modules/
+dist/
+
+# 录制文件和会议纪要 —— 含会议内容，绝不能进版本库
+data/
+
+# 证书私钥
+certs/
+
+# 含 API Key
+.env
+server/.env
+
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 生成说明书时的中间产物
+docs/*.pdf
+!InsideMeeting 使用说明.pdf

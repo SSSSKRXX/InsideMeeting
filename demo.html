@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>InsideMeeting 界面预览</title>
+<!-- 直接引用真实样式表，改了 styles.css 这个预览会同步变化 -->
+<link rel="stylesheet" href="web/src/styles.css" />
+<style>
+  .demo-nav {
+    position: sticky; top: 0; z-index: 99; display: flex; gap: 8px; align-items: center;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .demo-nav b { font-weight: 600; margin-right: 8px; }
+  .demo-nav button {
+    background: transparent; border: 1px solid var(--line); color: var(--text);
+    padding: 5px 14px; border-radius: 999px; font-size: 13px;
+  }
+  .demo-nav button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .demo-nav .note { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .screen { display: none; height: calc(100vh - 45px); }
+  .screen.on { display: flex; flex-direction: column; }
+  .fake-video { background: linear-gradient(135deg, #334155, #1e293b); }
+  .fake-video.b { background: linear-gradient(135deg, #3f3f46, #27272a); }
+  .fake-video.c { background: linear-gradient(135deg, #44403c, #292524); }
+  .fake-video.d { background: linear-gradient(135deg, #3730a3, #1e1b4b); }
+  .fake-screen { background: repeating-linear-gradient(45deg, #1e293b, #1e293b 14px, #172033 14px, #172033 28px); }
+</style>
+</head>
+<body>
+
+<div class="demo-nav">
+  <b>InsideMeeting 界面预览</b>
+  <button class="on" data-s="room">会议室</button>
+  <button data-s="lobby">入会页</button>
+  <button data-s="share">屏幕共享</button>
+  <button data-s="archive">会议记录</button>
+  <span class="note">静态预览，按钮不可交互。缩小窗口可以看手机端布局。</span>
+</div>
+
+<!-- ==================== 会议室 ==================== -->
+<div class="screen on" id="s-room">
+  <div class="room" style="flex:1; min-height:0;">
+    <header class="room-head">
+      <div class="room-title">
+        <strong>产品评审</strong>
+        <span class="muted">42:17</span>
+        <span class="rec-dot">● 录制中 第 1 段</span>
+        <span class="live-dot">实时纪要</span>
+      </div>
+      <div class="room-head-right">
+        <div class="layout-switch">
+          <button class="on">自动</button><button>画廊</button><button>演讲者</button>
+        </div>
+        <span class="muted hide-sm">4 人</span>
+      </div>
+    </header>
+
+    <div class="room-body">
+      <main class="stage layout-gallery">
+        <div class="grid" style="--cols:2">
+          <div class="tile speaking">
+            <div class="video-wrap fake-video"><div class="avatar">张</div></div>
+            <div class="tile-bar"><span class="tname">张三</span><span class="tile-icons"><b>🔊</b></span></div>
+          </div>
+          <div class="tile">
+            <div class="video-wrap fake-video b"><div class="avatar">李</div></div>
+            <div class="tile-bar"><span class="tname">李四</span><span class="tile-icons"><b>🔇</b></span></div>
+          </div>
+          <div class="tile">
+            <div class="video-wrap fake-video c"><div class="avatar">王</div></div>
+            <div class="tile-bar"><span class="tname">王五</span><span class="tile-icons"><b>✋</b></span></div>
+          </div>
+          <div class="tile pinned">
+            <div class="video-wrap fake-video d"><div class="avatar">我</div></div>
+            <div class="tile-bar"><span class="tname">赵六（我）</span><span class="tile-icons"><b>📌</b></span></div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="sidebar">
+        <nav class="tabs">
+          <button class="on">实时纪要</button><button>成员 4</button><button>聊天 <em>2</em></button>
+        </nav>
+        <div class="panel live">
+          <div class="live-head">
+            <button class="chip on">实时纪要运行中</button>
+            <button class="link">立即刷新</button>
+          </div>
+          <div class="live-summary">
+            <div class="live-summary-meta">摘要更新于 14:32</div>
+            <div class="doc">
+              <h2>目前在聊什么</h2>
+              <ul><li>下季度排期，以及接口交付时间。</li></ul>
+              <h2>已经明确的</h2>
+              <ul>
+                <li><span class="mention">@张三</span> 确认接口周三交付。</li>
+                <li><span class="mention">@王五</span> 认可当前方案，不再补充。</li>
+              </ul>
+              <h2>出现的待办</h2>
+              <ul><li><span class="mention">@李四</span>：周四开始联调。</li></ul>
+              <h2>分歧与待确认</h2>
+              <ul><li>压测时间点尚未确定，<span class="mention">@张三</span> 与 <span class="mention">@李四</span> 意见不同。</li></ul>
+            </div>
+          </div>
+          <details class="live-raw" open>
+            <summary>实时逐字流（37）</summary>
+            <div class="captions">
+              <div class="cap"><span class="ts">14:30</span> <b class="mention">@张三</b> 我们先过一下这周的进度</div>
+              <div class="cap"><span class="ts">14:30</span> <b class="mention">@李四</b> 接口那块我这边周三能交</div>
+              <div class="cap"><span class="ts">14:31</span> <b class="mention">@张三</b> 那压测放在周五还是下周一</div>
+              <div class="cap"><span class="ts">14:31</span> <b class="mention">@李四</b> 我倾向下周一，周五怕来不及</div>
+              <div class="cap"><span class="ts">14:32</span> <b class="mention">@王五</b> 方案我这边没问题</div>
+            </div>
+          </details>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="toolbar">
+      <button class="tool">🎤<i>静音</i></button>
+      <button class="tool">📹<i>关摄像头</i></button>
+      <button class="tool">🖥<i>共享屏幕</i></button>
+      <button class="tool rec">⏹<i>停止录制</i></button>
+      <button class="tool">✋<i>举手</i></button>
+      <div class="spacer"></div>
+      <button class="ghost">会议记录</button>
+      <button class="tool leave">📴<i>离开</i></button>
+    </footer>
+  </div>
+</div>
+
+<!-- ==================== 屏幕共享 ==================== -->
+<div class="screen" id="s-share">
+  <div class="room" style="flex:1; min-height:0;">
+    <header class="room-head">
+      <div class="room-title">
+        <strong>产品评审</strong><span class="muted">48:02</span>
+        <span class="rec-dot">● 录制中 第 1 段</span><span class="live-dot">实时纪要</span>
+      </div>
+      <div class="room-head-right">
+        <div class="layout-switch"><button class="on">自动</button><button>画廊</button><button>演讲者</button></div>
+        <span class="muted hide-sm">4 人</span>
+      </div>
+    </header>
+    <div class="room-body">
+      <main class="stage layout-share">
+        <div class="focus">
+          <div class="video-wrap fake-screen"><div class="avatar" style="background:none; font-size:15px; color:#64748b;">李四共享的画面</div></div>
+          <div class="focus-label">李四 正在共享屏幕</div>
+        </div>
+        <div class="grid filmstrip">
+          <div class="tile speaking"><div class="video-wrap fake-video"><div class="avatar">张</div></div><div class="tile-bar"><span class="tname">张三</span></div></div>
+          <div class="tile"><div class="video-wrap fake-video b"><div class="avatar">李</div></div><div class="tile-bar"><span class="tname">李四</span><span class="tile-icons"><b>🖥</b></span></div></div>
+          <div class="tile"><div class="video-wrap fake-video c"><div class="avatar">王</div></div><div class="tile-bar"><span class="tname">王五</span></div></div>
+          <div class="tile"><div class="video-wrap fake-video d"><div class="avatar">我</div></div><div class="tile-bar"><span class="tname">赵六（我）</span></div></div>
+        </div>
+      </main>
+      <aside class="sidebar">
+        <nav class="tabs"><button>实时纪要</button><button class="on">成员 4</button><button>聊天</button></nav>
+        <div class="panel">
+          <div class="person"><span class="dot"></span><span class="pname">赵六（我）</span></div>
+          <div class="person"><span class="dot"></span><span class="pname">张三</span><button class="link">请他静音</button></div>
+          <div class="person"><span class="dot" style="opacity:.25"></span><span class="pname">李四</span><span class="muted">共享中</span><button class="link">请他静音</button></div>
+          <div class="person"><span class="dot" style="opacity:.25"></span><span class="pname">王五</span><span class="muted">静音</span><button class="link">请他静音</button></div>
+          <hr />
+          <button class="chip">开启我的浏览器字幕</button>
+          <p class="hint">正在说话的人边框会亮起，用的是本地音量检测，不消耗任何额度。</p>
+        </div>
+      </aside>
+    </div>
+    <footer class="toolbar">
+      <button class="tool">🎤<i>静音</i></button>
+      <button class="tool">📹<i>关摄像头</i></button>
+      <button class="tool on">🖥<i>停止共享</i></button>
+      <button class="tool rec">⏹<i>停止录制</i></button>
+      <button class="tool">✋<i>举手</i></button>
+      <div class="spacer"></div>
+      <button class="tool leave">📴<i>离开</i></button>
+    </footer>
+  </div>
+</div>
+
+<!-- ==================== 入会页 ==================== -->
+<div class="screen" id="s-lobby">
+  <div class="lobby" style="flex:1;">
+    <div class="lobby-card">
+      <div class="lobby-preview">
+        <div class="fake-video" style="width:100%; height:100%; display:grid; place-content:center; color:#64748b;">摄像头预览</div>
+        <div class="preview-controls">
+          <button class="chip on">麦克风开</button>
+          <button class="chip on">摄像头开</button>
+        </div>
+      </div>
+      <form class="lobby-form" onsubmit="return false">
+        <h1>InsideMeeting</h1>
+        <p class="sub">内部会议 · 不限时长 · 分轨录制 · 自动纪要</p>
+        <label>你的姓名<input value="赵六" placeholder="会议纪要里的 @姓名" /></label>
+        <label>房间号<input value="产品评审" placeholder="例如 weekly" /></label>
+        <details class="devices"><summary>设备选择</summary>
+          <label>麦克风<select><option>MacBook Pro 麦克风</option></select></label>
+          <label>摄像头<select><option>FaceTime 高清摄像头</option></select></label>
+        </details>
+        <button class="primary" type="button">加入会议</button>
+        <div class="lobby-foot">
+          <button type="button" class="link">查看历史会议与纪要</button>
+          <span class="muted">转写已就绪 · 纪要已就绪 · 每 60 分钟切分录制文件</span>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 会议记录 ==================== -->
+<div class="screen" id="s-archive">
+  <div class="archive" style="flex:1; min-height:0;">
+    <header class="arch-head"><button class="ghost">← 返回</button><h2>历史会议</h2></header>
+    <div class="arch-body">
+      <aside class="arch-list">
+        <button class="arch-item on">
+          <strong>产品评审</strong>
+          <span class="muted">2026/07/27 14:00:00</span>
+          <span class="muted">96 分钟 · 4 人 · 已出纪要</span>
+        </button>
+        <button class="arch-item">
+          <strong>周会</strong>
+          <span class="muted">2026/07/24 10:00:00</span>
+          <span class="muted">52 分钟 · 6 人 · 已出纪要</span>
+        </button>
+        <button class="arch-item">
+          <strong>技术方案讨论</strong>
+          <span class="muted">2026/07/22 16:30:00</span>
+          <span class="muted">78 分钟 · 3 人 · 未处理</span>
+        </button>
+      </aside>
+      <main class="arch-detail">
+        <div class="arch-title">
+          <h3>产品评审</h3>
+          <span class="muted">2026/07/27 14:00:00 · 96 分钟 · 参会：张三、李四、王五、赵六</span>
+        </div>
+        <div class="arch-actions">
+          <button class="primary">重新生成逐字稿与纪要</button>
+          <button class="ghost">仅重写纪要（不重新转写）</button>
+          <button class="ghost">只出逐字稿</button>
+        </div>
+        <div class="job done">
+          <div class="bar"><i style="width:100%"></i></div>
+          <span>100% 完成</span>
+        </div>
+        <nav class="tabs">
+          <button class="on">会议纪要</button><button>逐字稿</button><button>待办</button><button>录制文件</button><button>发言统计</button>
+        </nav>
+        <div class="doc">
+          <div class="doc-tools"><button class="ghost">下载 Markdown</button><button class="ghost">复制全文</button></div>
+          <h1>会议纪要</h1>
+          <h2>一句话总结</h2>
+          <p>确定接口周三交付、周四联调，压测时间待定。</p>
+          <h2>关键结论与决定</h2>
+          <ul>
+            <li><span class="mention">@张三</span> 拍板接口按现方案走，周三交付。</li>
+            <li><span class="mention">@李四</span> 确认周四开始联调。</li>
+          </ul>
+          <h2>待办事项</h2>
+          <table>
+            <thead><tr><th>事项</th><th>负责人</th><th>截止时间</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr><td>交付订单接口</td><td><span class="mention">@张三</span></td><td>周三</td><td class="ts">[00:12:30]</td></tr>
+              <tr><td>开始联调</td><td><span class="mention">@李四</span></td><td>周四</td><td class="ts">[00:14:02]</td></tr>
+              <tr><td>确定压测时间</td><td><span class="mention">@王五</span></td><td>未明确</td><td class="ts">[00:31:47]</td></tr>
+            </tbody>
+          </table>
+          <h2>悬而未决 / 需要跟进</h2>
+          <ul><li>压测放周五还是下周一，<span class="mention">@张三</span> 与 <span class="mention">@李四</span> 未达成一致。</li></ul>
+        </div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.demo-nav button').forEach((b) => {
+    b.onclick = () => {
+      document.querySelectorAll('.demo-nav button').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+      document.querySelectorAll('.screen').forEach((s) => s.classList.remove('on'));
+      document.getElementById('s-' + b.dataset.s).classList.add('on');
+    };
+  });
+</script>
+</body>
+</html>

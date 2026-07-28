@@ -1,0 +1,23 @@
+{
+  "name": "inside-meeting",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "内部会议软件：无时长限制的视频会议 / 屏幕共享 / 分轨录制 / LLM 会议纪要",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "setup": "npm install && npm run build",
+    "build": "npm --workspace web run build",
+    "dev": "concurrently -n server,web -c blue,green \"npm --workspace server run dev\" \"npm --workspace web run dev\"",
+    "start": "npm --workspace server run start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

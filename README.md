@@ -1,0 +1,403 @@
+<h1 align="center">InsideMeeting</h1>
+
+<p align="center">
+  自建的内部视频会议系统。不限时长，不限人数套餐，录制文件存在自己的机器上。<br/>
+  自动生成会议纪要，并且用 <code>@某某</code> 标注每条结论出自谁。
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?logo=node.js&logoColor=white" alt="Node.js >= 20" />
+  <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white" alt="React 18" />
+  <img src="https://img.shields.io/badge/WebRTC-mesh_P2P-333333?logo=webrtc&logoColor=white" alt="WebRTC mesh" />
+  <img src="https://img.shields.io/badge/平台-macOS%20|%20Windows%20|%20Linux-lightgrey" alt="平台" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-room.png" alt="InsideMeeting 会议室界面" width="100%" />
+</p>
+
+## 它解决什么问题
+
+主流会议软件的免费版有 40 分钟限制，付费版按人头收费，录像存在别人的云上。这套东西是为了绕开这三件事而写的：
+
+|  | 主流会议软件 | InsideMeeting |
+|---|---|---|
+| 时长 | 免费版 40 分钟 | 不限 |
+| 人数 | 按套餐 | 2–8 人（mesh 架构上限） |
+| 录制 | 存云端，常要付费 | 存自己机器，分轨保存 |
+| 会议纪要 | 附加功能，常要单独付费 | 内置。会中实时 + 会后完整 |
+| 发言人区分 | 声纹聚类，会认错 | 按音轨分离，100% 准确 |
+| 部署 | 无 | 需要一台常开的机器 |
+
+## 核心能力
+
+- **视频会议**：2–8 人，纯 P2P，画面不经过服务器
+- **屏幕共享**：有人开始共享时，所有人画面自动切过去
+- **三种布局**：画廊 / 演讲者（自动跟随当前发言人）/ 自动；双击可固定某人
+- **会中实时纪要**：约 20 秒延迟的滚动逐字流，每分钟刷新一版结构化摘要。中途加入的人一进来就能看到前面聊了什么
+- **分轨录制**：每人麦克风单独一条音轨，不限时长，每 60 分钟自动切一个可独立播放的文件
+- **会后完整纪要**：逐字稿 + 会议纪要 + 待办表格 + 发言时长统计，全部用 `@某某` 标注归属
+- 会中聊天、举手、请他人静音、浏览器本地字幕
+- 电脑和手机都能用（手机不支持发起屏幕共享，系统限制）
+
+## 30 秒了解设计取舍
+
+这套系统有三个不那么常规的决定，理解它们就理解了整个架构：
+
+**1. 媒体走 P2P，服务器只做信令和存储。** 8 人以内 mesh 完全够用，服务器不解码任何一路视频，一台 Mac mini 就能扛。代价是超过 8 人要改 SFU。
+
+**2. 录制在客户端做，每人只录自己的麦克风。** 这样发言人归属是 100% 准确的——谁的音轨就是谁说的，不需要声纹聚类。代价是每个人必须用自己的设备入会。
+
+**3. 会中和会后是两条独立的转写链路。** 会中每 15 秒一个独立小片，延迟优先；会后用完整音轨重转一遍，质量优先。会中识别歪的地方，会后那份仍然是准的。
+
+## 快速开始
+
+```bash
+git clone https://github.com/SSSSKRXX/InsideMeeting.git
+cd InsideMeeting
+
+cp .env.example .env      # 填入 ASR_API_KEY / LLM_API_KEY
+bash scripts/start.sh     # Windows: powershell -ExecutionPolicy Bypass -File scripts\start.ps1
+```
+
+`start.sh` 会依次检查依赖、生成证书、安装依赖、构建前端、启动服务。前置条件只有两个：Node.js ≥ 20 和 ffmpeg。
+
+想先看看界面长什么样，可以直接双击项目根目录的 `demo.html`——不需要启动任何服务。
+
+## 文档
+
+| 文件 | 内容 |
+|---|---|
+| 本文档 | 部署、配置、架构说明 |
+| [`InsideMeeting 使用说明.pdf`](InsideMeeting%20使用说明.pdf) | 发给团队成员的使用手册，假设读者完全不懂技术 |
+| [`deploy/windows-autostart.md`](deploy/windows-autostart.md) | Windows 开机自启 |
+| [`deploy/turnserver.conf`](deploy/turnserver.conf) | 走公网时的 coturn 配置 |
+| `demo.html` | 静态界面预览，双击即可打开 |
+
+---
+
+## 一、架构
+
+```
+              ┌─────────────── Mac mini ────────────────┐
+              │  信令（Socket.IO）· 静态页面             │
+  张三 ◄──────┤  录制落盘 · 实时转写调度 · 纪要生成      ├──────► 李四
+    │         └──────────────────────────────────────────┘         │
+    │                                                              │
+    └──────── 音视频 P2P 直连（走 Tailscale，不经服务器）──────────┘
+```
+
+**媒体走 P2P，服务器只做信令和存储。** 8 人以内 mesh 完全够用，Mac mini 不解码任何一路视频，CPU 几乎不动。
+
+**录制在客户端做。** 每个人的浏览器只录自己的麦克风，实时分片上传。这样发言人归属 100% 准确——谁的音轨就是谁说的，不需要声纹聚类，不会把两个人认成一个。
+
+**会中和会后是两条独立的转写链路：**
+
+| | 会中实时纪要 | 会后完整纪要 |
+|---|---|---|
+| 音频来源 | 每 15 秒一个独立小片，即传即转 | 完整连续音轨 |
+| 优先级 | 延迟优先（约 20 秒） | 质量优先 |
+| 静音处理 | 服务端过滤，静音片不送 ASR | 静音检测后只转有声区间 |
+| 结果 | 滚动摘要，每分钟重写 | 逐字稿 + 结构化纪要 + 待办 |
+
+两条链路互不干扰。会中识别歪了的地方，会后那份仍然是准的。
+
+**为什么不共用一条链路**：连续录制产生的中间分片没有容器头部，单独拿出来解不了码。多起一个 MediaRecorder 的代价只是一次额外的 opus 编码，远小于它省下的复杂度。
+
+---
+
+## 二、部署（Mac mini + Tailscale）
+
+大家都在各自家里，所以用 Tailscale 把所有设备组成一个虚拟内网。这样不需要公网 IP、不需要端口映射、不需要 TURN，也不对公网暴露任何端口。
+
+### 1. 组网
+
+在 Mac mini 和每个人的电脑/手机上装 Tailscale，登录同一个账号（或用 Tailnet 邀请成员）：
+
+```bash
+brew install --cask tailscale   # Mac mini
+```
+
+手机端在 App Store / 应用商店搜 Tailscale 即可。装完登录，就在同一个虚拟内网里了。
+
+在 Tailscale 管理后台的 DNS 页面**打开 MagicDNS 和 HTTPS Certificates**——这一步能让你拿到真证书，浏览器不会有任何安全警告。
+
+### 2. 装依赖并启动
+
+```bash
+brew install node ffmpeg
+
+cd ~/InsideMeeting
+cp .env.example .env      # 填 API Key，见下方配置
+bash scripts/gen-cert.sh  # 检测到 Tailscale 会自动申请正式证书
+npm install
+npm run build
+npm start
+```
+
+或直接 `bash scripts/start.sh`，上面几步一次做完。
+
+启动后把地址发给同事，形如 `https://macmini.你的tailnet.ts.net:8443`。
+
+> **为什么必须 HTTPS**：浏览器只在 https 或 localhost 下才允许网页访问摄像头、麦克风和屏幕共享。`tailscale cert` 给的是 Let's Encrypt 正式证书，所以没有任何警告。证书 90 天过期，脚本会提示你加一条 crontab 自动续期。
+>
+> 如果没能拿到 Tailscale 证书，脚本会回退到自签证书，首次访问点「高级 → 继续前往」也能用，只是每台设备都要点一次。
+
+### 3. 开机自启 + 不休眠
+
+```bash
+# 改好里面的路径
+cp deploy/com.inside.meeting.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.inside.meeting.plist
+
+# 防止 Mac mini 睡过去导致会议中断
+sudo pmset -a sleep 0 disksleep 0
+```
+
+### 服务端跑在 Windows 上
+
+Node 代码本身是跨平台的（路径全用 `path.join`，没有任何 Mac 专属调用），**换成 Windows 主机也能跑**，只是启动脚本和开机自启的做法不同：
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install Gyan.FFmpeg          # 装完要重开终端，让 PATH 生效
+winget install tailscale.tailscale
+
+cd C:\InsideMeeting
+copy .env.example .env              # 填 API Key
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1
+```
+
+`start.ps1` / `gen-cert.ps1` 是 `.sh` 那两个脚本的 PowerShell 版本，功能完全一致（同样会优先申请 Tailscale 正式证书；没装 openssl 时会自动改用 Windows 内置的证书接口生成自签证书）。
+
+开机自启用任务计划程序或 NSSM，步骤见 [`deploy/windows-autostart.md`](deploy/windows-autostart.md)。
+
+两个 Windows 专属的坑：
+
+- **防火墙**：首次启动会弹「是否允许 node.exe 通信」，**必须勾选「专用网络」**，否则别人连不进来。注册成服务时不会弹窗，得手动加放行规则（文档里有命令）。
+- **ffmpeg 不在 PATH**：装完 ffmpeg 一定要重开终端。实在不行就在 `.env` 里把 `FFMPEG_PATH` 和 `FFPROBE_PATH` 写成 exe 的完整路径。
+
+Linux 同理可跑，把 `brew` 换成 `apt` 即可（实际上本项目的自动化测试就是在 Linux 上跑的）。
+
+### 换成别的组网方式
+
+`.env` 里的 `NETWORK_MODE` 控制 ICE 策略：
+
+- `tailscale`（默认）/ `lan` —— peer 之间可直连，不使用 STUN/TURN
+- `public` —— 走公网，需要配 `STUN_URLS`，跨 NAT 还要自建 TURN（`deploy/turnserver.conf` 已备好 coturn 配置）
+
+---
+
+## 三、怎么用
+
+### 开会
+
+浏览器打开服务地址，填姓名和房间号。**姓名很重要**——它就是纪要里 `@某某` 的那个名字。房间号相同的人自动进同一个会。
+
+### 视图
+
+右上角切换布局：
+
+- **自动**（默认）—— 有人共享屏幕就切到共享画面，否则画廊视图
+- **画廊** —— 所有人平铺，不管有没有人在共享
+- **演讲者** —— 大画面跟随当前说话人，其他人在底部条
+
+**双击任意一个人的画面可以固定他**，再双击取消。固定后不再自动跟随。
+
+正在说话的人边框会亮起（本地音量检测，不消耗任何额度）。
+
+### 实时纪要
+
+默认自动开启。右侧「实时纪要」面板会看到：
+
+- 上半部分：每分钟刷新一次的结构化摘要（在聊什么 / 已明确的 / 待办 / 分歧）
+- 下半部分：展开可看约 20 秒延迟的滚动逐字流
+
+中途加入的人一进来就能拿到前面的全部内容，不用问"刚才说到哪了"。
+
+想省额度可以随时点面板里的按钮关掉；也可以点「立即刷新」强制重写一版摘要。
+
+### 录制
+
+工具栏点「⏺ 开始录制」，全房间所有人**同时**开始录各自的麦克风轨。这是有意的——少录一个人，纪要里就少一个发言人。
+
+录制中顶部显示「● 录制中 第 N 段」，每满 60 分钟自动切下一段，无缝继续。
+
+### 会后纪要
+
+进「会议记录」页面，选中这场会，点「生成逐字稿与会议纪要」。一场 1 小时 4 人的会大约几分钟。
+
+产出：
+
+- **逐字稿** `transcript.md` — `[00:12:33] @张三：……`，按全局时间轴排序
+- **会议纪要** `summary.md` — 关键结论、分议题纪要、待办表格、悬而未决事项
+- **待办** `actions.json` — 结构化的事项/负责人/截止时间
+- **发言统计** — 每人说了多久、多少轮
+
+名字填错了，在「录制文件」页点「改名」修正，再点「仅重写纪要」——不重新转写，不重复花钱。
+
+### 命令行批处理
+
+```bash
+node server/src/cli-process.js --list     # 列出所有会议
+node server/src/cli-process.js --all      # 处理所有还没出纪要的会议
+node server/src/cli-process.js <会议ID>
+```
+
+配合 crontab 夜间统一处理：
+
+```
+0 2 * * * cd ~/InsideMeeting && /opt/homebrew/bin/node server/src/cli-process.js --all
+```
+
+---
+
+## 四、手机端
+
+手机浏览器直接打开同一个地址即可。装了 Tailscale 的手机在外面也能连。
+
+| 功能 | iPhone (Safari) | Android (Chrome) |
+|---|---|---|
+| 视频会议、看共享 | ✅ | ✅ |
+| 布局切换、聊天、举手 | ✅ | ✅ |
+| 看实时纪要 | ✅ | ✅ |
+| 录制自己的音轨 | ✅（录成 mp4，服务端已兼容） | ✅ |
+| **发起**屏幕共享 | ❌ 系统不支持 | ❌ 系统不支持 |
+| 浏览器本地字幕 | ❌ | ✅ |
+
+手机上不支持的按钮会自动隐藏。工具栏在手机上只显示图标，纪要和聊天收进底部抽屉。
+
+一个实际提醒：**手机上要把浏览器保持在前台**。切到后台或锁屏后，iOS 会暂停 MediaRecorder，这段音频就录不到了。手机参会的人如果需要发言被记进纪要，建议别锁屏。
+
+---
+
+## 五、配置
+
+全部在 `.env`，完整清单见 `.env.example`。最少要改的：
+
+```bash
+ASR_BASE_URL=https://api.openai.com/v1
+ASR_API_KEY=sk-xxx
+ASR_MODEL=whisper-1
+
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=sk-xxx
+LLM_MODEL=gpt-4o-mini
+```
+
+两个都是 OpenAI 兼容接口，可以换成任何兼容服务商（DeepSeek、Moonshot、通义、硅基流动），或指向本机的 faster-whisper-server / Ollama 做到全程离线，代码不用改。
+
+**关于成本**。三道闸门在控制实时纪要的开销：
+
+1. 客户端丢掉体积过小的片（基本是纯静音）
+2. 服务端对每个片做静音检测，没有人声就直接删掉，不送 ASR
+3. 距上次摘要新增字数不足 `LIVE_MIN_CHARS`（默认 60 字）就跳过这轮摘要
+
+实测：一个 15 秒的纯静音片产生 0 次 ASR 调用；六个有声片只触发了 1 次摘要。分轨录音里每个人大部分时间是不说话的，这几步通常能砍掉大部分开销。
+
+常用配置：
+
+| 变量 | 说明 |
+|---|---|
+| `NETWORK_MODE` | `tailscale` / `lan` / `public` |
+| `LIVE_ENABLED` | 实时纪要总开关，默认 true |
+| `LIVE_CHUNK_SECONDS` | 实时小片长度，默认 15 秒。调小延迟更低但请求更多 |
+| `LIVE_SUMMARY_SECONDS` | 摘要刷新间隔，默认 60 秒 |
+| `LIVE_MIN_CHARS` | 新增字数不到这个值就跳过摘要，默认 60 |
+| `SEGMENT_MINUTES` | 录制切分间隔，默认 60 |
+| `CHUNK_SECONDS` | 录制分片上传间隔，默认 5 秒 |
+| `JOIN_PASSWORD` | 入会口令，留空不校验 |
+| `ASR_LANGUAGE` | `zh` / `en` / `auto` |
+| `ASR_CONCURRENCY` | 会后转写并发数，默认 3 |
+
+---
+
+## 六、文件存在哪
+
+```
+data/recordings/<会议ID>/
+├── manifest.json               参会人、分段、时间戳、聊天记录、实时摘要快照
+├── <peerId>__mic__s000.webm    张三的麦克风，第 1 段（0-60 分钟）
+├── <peerId>__mic__s001.webm    张三的麦克风，第 2 段（60-120 分钟）
+├── <peerId>__mic__s000.webm    李四的麦克风，第 1 段
+├── <peerId>__screen__s000.webm 屏幕共享画面
+├── transcript.md / .json       逐字稿
+├── summary.md                  会议纪要
+└── actions.json                待办
+```
+
+实时纪要用的临时小片在 `data/tmp/live/` 下，用完即删（`LIVE_KEEP_AUDIO=true` 可保留排查问题）。
+
+webm 文件用 VLC、Chrome、剪映、Final Cut 都能直接打开。转 mp4：
+
+```bash
+ffmpeg -i 输入.webm -c:v h264_videotoolbox -c:a aac 输出.mp4
+```
+
+---
+
+## 七、已知限制
+
+- **浏览器**：电脑端建议 Chrome 或 Edge。Safari 能开会，MediaRecorder 支持有限。
+- **人数**：mesh 架构下每人要给其他所有人各发一路视频，8 人时上行约需 10 Mbps。要开 15 人以上的会得引入 SFU（mediasoup / LiveKit），服务端改动不小，但客户端和录制/纪要这套逻辑可以完全复用。
+- **说话人区分**：靠音轨分离，前提是每个人用自己的设备入会。**两个人共用一台电脑一个麦克风，会被记成同一个发言人。**
+- **实时纪要的准确率**低于会后那份。15 秒的小片缺少上下文，专有名词和人名更容易识别错。会后的完整链路有整段上下文，明显更准。
+- **手机切后台**会暂停录制，这段音频会缺失。
+- **静音时段**不会被转写，符合预期。
+- **断网**：录制分片上传失败会自动重试（指数退避），分片留在内存队列里不丢；但重试期间关掉标签页，那部分会丢失。
+
+## 八、后续可以加的东西
+
+按性价比排序，都不需要推翻现有架构：
+
+1. **会议密码 + 等候室**（现在只有全局口令）
+2. **纪要自动推送**：处理完自动发到企业微信 / 飞书 / 邮件
+3. **多轨合成成片**：ffmpeg 把各人音轨和屏幕共享合成一个带画廊视图的 mp4，发给没参会的人
+4. **实时纪要问答**：会中直接问"刚才关于排期说了什么"，基于已有逐字流回答
+5. **虚拟背景 / 降噪**：浏览器端用 MediaPipe，纯前端改动
+6. **Electron 桌面壳**：目前网页版 Win/Mac 都能用，套 Electron 主要是为了系统级音频捕获和更好的全屏共享
+
+---
+
+## 九、验证状态
+
+已在开发环境实测通过：
+
+**基础链路**
+
+- 前端构建通过，服务端启动正常，各 API 正常响应
+- 分片上传：文件切 3 片依次上传后，服务端拼接结果与原文件**字节完全一致**
+- 60 分钟切分：模拟 3 小时会议产生 3 个独立 webm，每个都能被 ffprobe 单独读出完整时长
+- 静音检测：15 秒测试音频（有声 0-3s / 6-10s / 13-15s）准确识别出 3 个区间
+- 跨音轨时间对齐：两人音轨起始相差 5 秒，合并后逐字稿的时间戳与发言人归属均正确
+- 信令：两客户端加入、offer 中转、录制指令全房间同步、聊天、离会广播全部通过
+- 会后纪要：mock ASR/LLM 跑通完整流水线，产出逐字稿 + 纪要 + 发言统计
+- 异常处理：转写全部失败时报明确错误，而不是产出一份空逐字稿
+
+**实时纪要**
+
+- 有声小片正确转写并按绝对时间推送给房间内所有人（时间戳偏移计算正确）
+- **纯静音片被过滤，产生 0 次 ASR 调用**
+- 新增字数未达阈值时自动跳过摘要；点「立即刷新」可强制生成
+- 摘要通过 socket 实时推送到所有人的会中视图
+- 中途加入者拿到完整的历史逐字流和最新摘要
+
+**组网**
+
+- `NETWORK_MODE=tailscale` 时 `/api/config` 返回空 `iceServers`，客户端走 host candidate 直连
+
+未验证（需要真实环境）：真实多机 P2P 打通、Tailscale 跨地域连通质量、真实 ASR 服务的中文识别准确率、手机端实机表现。
+
+---
+
+## 十、安全提醒
+
+- **`.env` 已被 gitignore**，里面有 API Key，不要强制提交。
+- **`data/` 目录已被 gitignore**，里面是会议录音和纪要原文，不要提交到任何代码仓库。
+- **`certs/` 已被 gitignore**，含 TLS 私钥。
+- 如果仓库是公开的，部署时务必设置 `JOIN_PASSWORD` 和 `ADMIN_TOKEN`。
+
+## 十一、许可
+
+[MIT](LICENSE)
