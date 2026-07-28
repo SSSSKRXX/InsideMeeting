@@ -396,7 +396,6 @@ ffmpeg -i 输入.webm -c:v h264_videotoolbox -c:a aac 输出.mp4
 - **`.env` 已被 gitignore**，里面有 API Key，不要强制提交。
 - **`data/` 目录已被 gitignore**，里面是会议录音和纪要原文，不要提交到任何代码仓库。
 - **`certs/` 已被 gitignore**，含 TLS 私钥。
-- 如果仓库是公开的，部署时务必设置 `JOIN_PASSWORD` 和 `ADMIN_TOKEN`。
 
 ## 十一、许可
 
