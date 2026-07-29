@@ -51,6 +51,8 @@ function guessProjectDir() {
     path.join(os.homedir(), 'InsideMeeting'),
     path.join(os.homedir(), 'Desktop', 'InsideMeeting'),
     path.join(os.homedir(), 'Desktop', 'AgentProgram', 'InsideMeeting'),
+    path.join(os.homedir(), 'Documents', 'InsideMeeting'),
+    'C:\\InsideMeeting',
   ];
   for (const g of guesses) {
     if (fs.existsSync(path.join(g, 'server', 'src', 'index.js'))) return g;
@@ -129,10 +131,19 @@ function startService() {
     return;
   }
 
+  // Windows 上 ffmpeg 常常不在 GUI 程序继承到的 PATH 里，把常见位置补进去
+  const extraPath =
+    process.platform === 'win32'
+      ? ['C:\\ffmpeg\\bin', path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links')]
+          .filter(Boolean)
+          .join(';')
+      : '/opt/homebrew/bin:/usr/local/bin';
+  const sep = process.platform === 'win32' ? ';' : ':';
+
   child = spawn(nodeBin, [path.join(dir, 'server', 'src', 'index.js')], {
     cwd: dir,
     stdio: ['ignore', out, out],
-    env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
+    env: { ...process.env, PATH: `${extraPath}${sep}${process.env.PATH || ''}` },
   });
 
   child.on('exit', (code) => {
@@ -158,8 +169,16 @@ function startService() {
 }
 
 function findNode() {
-  const candidates = ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'];
-  for (const c of candidates) if (fs.existsSync(c)) return c;
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          'C:\\Program Files\\nodejs\\node.exe',
+          'C:\\Program Files (x86)\\nodejs\\node.exe',
+          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'nodejs', 'node.exe'),
+          path.join(process.env.ProgramFiles || '', 'nodejs', 'node.exe'),
+        ]
+      : ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'];
+  for (const c of candidates) if (c && fs.existsSync(c)) return c;
   return null;
 }
 
@@ -233,6 +252,112 @@ function chooseProjectDir(auto = false) {
     return;
   }
   writeConfig({ projectDir: r[0] });
+  refresh();
+}
+
+/** 带 body 的请求，用来调管理接口 */
+function postJson(url, body) {
+  return new Promise((resolve) => {
+    const lib = url.startsWith('https') ? https : http;
+    const data = JSON.stringify(body);
+    const u = new URL(url);
+    const req = lib.request(
+      {
+        hostname: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: 'POST',
+        rejectUnauthorized: false,
+        timeout: 120000, // 搬移文件可能很慢
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          'x-admin-token': readAdminToken(),
+        },
+      },
+      (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(out));
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+    );
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ ok: false, error: '请求超时' });
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+/** 从项目的 .env 里读管理口令，省得用户在这里再填一遍 */
+function readAdminToken() {
+  const dir = guessProjectDir();
+  if (!dir) return '';
+  try {
+    const env = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+    return env.match(/^ADMIN_TOKEN=(.*)$/m)?.[1]?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 原生文件夹选择框。
+ * 这是菜单栏程序相对网页后台的核心优势 —— 它跑在服务器那台机器上，
+ * 能直接调系统的选择框，用户不用手敲绝对路径。
+ */
+async function pickStoragePath(which) {
+  const base = serviceUrl();
+  if (!base) return;
+
+  const current = await fetchJson(`${base}/api/admin/paths?token=${encodeURIComponent(readAdminToken())}`);
+  const label = which === 'recordings' ? '录制文件' : '会议纪要';
+
+  const picked = dialog.showOpenDialogSync({
+    title: `选择${label}的保存位置`,
+    message: `${label}将保存到你选择的目录下`,
+    defaultPath: which === 'recordings' ? current?.recordings : current?.minutesEffective,
+    properties: ['openDirectory', 'createDirectory'],
+    buttonLabel: '选择',
+  });
+  if (!picked?.[0]) return;
+
+  const target = picked[0];
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['取消', '只改位置', '搬移已有文件并改位置'],
+    defaultId: 2,
+    cancelId: 0,
+    message: `把${label}保存到这里？`,
+    detail:
+      `${target}\n\n` +
+      '「搬移已有文件」会把已有内容一起挪过去，同一个磁盘内是瞬间完成的，跨磁盘会比较慢。\n' +
+      '「只改位置」的话，以后的新会议存到新位置，已有的留在原地——界面上会看不到那些历史会议。',
+  });
+  if (response === 0) return;
+
+  const body = { migrate: response === 2 };
+  if (which === 'recordings') body.recordings = target;
+  else body.minutes = target;
+
+  const r = await postJson(`${base}/api/admin/paths`, body);
+  if (!r || r.ok === false) {
+    return dialog.showErrorBox('设置失败', r?.error || '服务没有响应');
+  }
+
+  const moved = r.migrated?.recordings?.moved ?? r.migrated?.minutes?.moved;
+  notify(
+    `${label}位置已更新`,
+    moved != null ? `已搬移 ${moved} 项内容到新位置` : (r.warnings?.[0] || target)
+  );
   refresh();
 }
 
@@ -337,6 +462,19 @@ function refresh() {
 
   items.push({ type: 'separator' });
 
+  items.push({
+    label: '录制保存位置…',
+    enabled: running,
+    click: () => pickStoragePath('recordings'),
+  });
+  items.push({
+    label: '纪要保存位置…',
+    enabled: running,
+    click: () => pickStoragePath('minutes'),
+  });
+
+  items.push({ type: 'separator' });
+
   items.push({ label: '查看日志', click: openLogWindow });
   items.push({
     label: '打开数据目录',
@@ -403,9 +541,14 @@ app.whenReady().then(() => {
   // 菜单栏应用不需要 Dock 图标
   if (process.platform === 'darwin') app.dock?.hide();
 
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'));
-  icon.setTemplateImage(true); // 让 macOS 自动适配亮色/暗色菜单栏
-  tray = new Tray(icon);
+  // macOS 用模板图标（系统自动适配亮/暗菜单栏），Windows 托盘需要彩色图标
+  const iconFile = process.platform === 'darwin' ? 'trayTemplate.png' : 'icon.png';
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', iconFile));
+  if (process.platform === 'darwin') icon.setTemplateImage(true);
+  tray = new Tray(process.platform === 'win32' ? icon.resize({ width: 16, height: 16 }) : icon);
+
+  // Windows 的托盘图标点左键不会弹菜单，要手动处理
+  if (process.platform === 'win32') tray.on('click', () => tray.popUpContextMenu());
 
   refresh();
   poll();

@@ -71,11 +71,14 @@ cat <<'TIP'
    要彻底去掉这个提示得买苹果开发者证书，一年 99 美元。
    内部工具不值当，右键打开一次就行。
 
-2. Windows 的 exe 打不出来
-   electron-builder 只能在对应平台打对应平台的包。
-   需要 exe 的话，找台 Windows 机器 clone 仓库跑：
-     cd desktop && npm install && npm run dist:win
-   或者用 GitHub Actions 在云上打（想要的话我可以加配置）。
+2. 这里打不出 Windows 的 exe
+   electron-builder 只能在对应平台打对应平台的包。要 exe 有两个办法：
+
+   a) 推一个 tag，让 GitHub Actions 在云上两个平台一起打（不需要 Windows 电脑）：
+        git tag v0.1.0 && git push origin v0.1.0
+      打完去仓库的 Releases 页面下载。
+
+   b) 在 Windows 机器上双击项目根目录的「打包桌面程序.bat」。
 
 3. 菜单栏程序需要机器上装了 Node.js
    它只是控制服务启停，服务本身还是那个 node 进程。
