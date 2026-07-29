@@ -7,6 +7,7 @@ import { listRooms, setPassword, updateRoom, revokeHostTokens } from './roomstor
 import { enabledChannels } from './notify.js';
 import { checkFfmpeg } from './media.js';
 import { activeRooms } from './signaling.js';
+import { currentPaths, recordingsRoot } from './storage.js';
 
 /** 递归统计目录大小 */
 function dirSize(dir) {
@@ -72,12 +73,13 @@ export async function adminStatus() {
     },
     storage: {
       dataDir: config.dataDir,
+      ...currentPaths(),
       recordingsBytes: store.bytes,
       recordingsFiles: store.files,
       meetings: listMeetings().length,
       freeBytes: (() => {
         try {
-          const s = fs.statfsSync(config.dataDir);
+          const s = fs.statfsSync(recordingsRoot());
           return s.bavail * s.bsize;
         } catch {
           return null;
