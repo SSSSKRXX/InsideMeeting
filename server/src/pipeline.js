@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { meetingDir, readMeeting, updateMeeting } from './store.js';
+import { meetingDir, minutesDir, readMeeting, updateMeeting } from './store.js';
 import { detectSpeechRegions, extractAudioClip, probeDuration, tmpDir, checkFfmpeg, installHint } from './media.js';
 import { transcribeFile, mapLimit, isLikelyHallucination } from './asr.js';
 import { summarizeTranscript, extractActionItems } from './llm.js';
@@ -164,9 +164,12 @@ export async function processMeeting(meetingId, { force = false, skipSummary = f
       ``,
     ].join('\n');
 
-    fs.writeFileSync(path.join(dir, 'transcript.md'), transcriptMd);
+    // 纪要产物写到纪要目录（没单独配就等于录制目录）
+    const outDir = minutesDir(meetingId);
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, 'transcript.md'), transcriptMd);
     fs.writeFileSync(
-      path.join(dir, 'transcript.json'),
+      path.join(outDir, 'transcript.json'),
       JSON.stringify(
         {
           meetingId,
@@ -197,13 +200,13 @@ export async function processMeeting(meetingId, { force = false, skipSummary = f
         durationText: fmtDuration(durationMs),
         speakers,
       });
-      fs.writeFileSync(path.join(dir, 'summary.md'), summary + '\n');
+      fs.writeFileSync(path.join(outDir, 'summary.md'), summary + '\n');
       artifacts.summary = 'summary.md';
 
       setJob(meetingId, { progress: 93, message: '抽取待办事项' });
       try {
         const actions = await extractActionItems(transcriptText);
-        fs.writeFileSync(path.join(dir, 'actions.json'), JSON.stringify(actions, null, 2));
+        fs.writeFileSync(path.join(outDir, 'actions.json'), JSON.stringify(actions, null, 2));
         artifacts.actions = 'actions.json';
       } catch { /* 待办抽取失败不影响主流程 */ }
     }
@@ -254,7 +257,7 @@ export async function processMeeting(meetingId, { force = false, skipSummary = f
 
 /** 只重跑纪要（逐字稿已存在时省钱省时） */
 export async function resummarize(meetingId) {
-  const dir = meetingDir(meetingId);
+  const dir = minutesDir(meetingId);
   const tp = path.join(dir, 'transcript.json');
   if (!fs.existsSync(tp)) throw new Error('尚无逐字稿，请先运行完整处理');
   const t = JSON.parse(fs.readFileSync(tp, 'utf8'));
@@ -265,6 +268,7 @@ export async function resummarize(meetingId) {
     durationText: fmtDuration(t.durationMs),
     dateText: new Date(t.startedAt).toLocaleString('zh-CN', { hour12: false }),
   });
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'summary.md'), summary + '\n');
   await updateMeeting(meetingId, (m) => {
     m.artifacts = { ...(m.artifacts || {}), summary: 'summary.md' };

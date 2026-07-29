@@ -7,13 +7,18 @@ import express from 'express';
 import { config, ROOT, iceServers } from './config.js';
 import { attachSignaling, activeRooms } from './signaling.js';
 import { openSegment, appendChunk, closeSegment, meetingFiles, uploadLimitBytes } from './recording.js';
-import { listMeetings, readMeeting, updateMeeting, meetingDir } from './store.js';
+import { listMeetings, readMeeting, updateMeeting, meetingDir, minutesDir, resolveArtifact } from './store.js';
 import { processMeeting, resummarize, jobStatus } from './pipeline.js';
 import { checkFfmpeg } from './media.js';
 import { initLive, ingestLiveChunk, liveState, forceSummary } from './live.js';
 import { pushSummary, enabledChannels } from './notify.js';
 import { publicSettings, listRooms } from './roomstore.js';
 import { adminStatus, storageBreakdown, cleanup, tailLog, adminRoomOps } from './admin.js';
+import { currentPaths, setPaths, validateDir, suggestLocations } from './storage.js';
+import { readableSettings, saveSettings, resetSetting, applySettings, testAsr, testLlm, testNotify } from './settings.js';
+
+// 界面上保存的设置覆盖 .env，启动时先应用一次
+applySettings();
 
 const app = express();
 app.disable('x-powered-by');
@@ -26,6 +31,21 @@ function requireAdmin(req, res, next) {
   const t = req.get('x-admin-token') || req.query.token;
   if (t === config.adminToken) return next();
   res.status(401).json({ error: '需要管理口令' });
+}
+
+/**
+ * 会议记录（历史录音、逐字稿、纪要）的访问控制。
+ *
+ * 这些内容比「能不能进会」敏感得多：进会只能听到当下，
+ * 而历史记录是所有会议内容的全文。默认没有口令是为了开箱即用，
+ * 但管理后台会明确提示这个风险。管理口令同样放行。
+ */
+function requireArchive(req, res, next) {
+  if (!config.archivePassword) return next();
+  const t = req.get('x-archive-token') || req.query.token;
+  if (t === config.archivePassword) return next();
+  if (config.adminToken && t === config.adminToken) return next();
+  res.status(401).json({ error: '需要查看会议记录的口令', reason: 'archive-password' });
 }
 
 // ---------------- 基础 ----------------
@@ -51,6 +71,9 @@ app.get('/api/config', (req, res) => {
       screenShare: true,
       notify: enabledChannels(),
     },
+    archive: { needPassword: Boolean(config.archivePassword) },
+    // 一项关键配置都没有时，前端会显示「还没配置完」的引导
+    setupDone: Boolean(config.asr.apiKey && config.llm.apiKey),
   });
 });
 
@@ -102,6 +125,56 @@ app.post('/api/admin/rooms/:roomId', requireAdmin, (req, res) => {
   if (req.body?.revokeHost) adminRoomOps.revokeHostTokens(id);
   const s = adminRoomOps.updateRoom(id, req.body || {});
   res.json(s);
+});
+
+// 存储位置：查看 / 候选位置 / 校验 / 修改
+app.get('/api/admin/paths', requireAdmin, (req, res) =>
+  res.json({ ...currentPaths(), suggestions: suggestLocations() })
+);
+
+app.post('/api/admin/paths/validate', requireAdmin, async (req, res) =>
+  res.json(await validateDir(String(req.body?.dir || '')))
+);
+
+app.post('/api/admin/paths', requireAdmin, async (req, res) => {
+  try {
+    const r = await setPaths({
+      recordings: typeof req.body?.recordings === 'string' ? req.body.recordings.trim() : undefined,
+      minutes: typeof req.body?.minutes === 'string' ? req.body.minutes.trim() : undefined,
+      migrate: Boolean(req.body?.migrate),
+    });
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 设置：读取 / 保存 / 恢复默认 / 连通性测试
+app.get('/api/admin/settings', requireAdmin, (req, res) => res.json(readableSettings()));
+
+app.post('/api/admin/settings', requireAdmin, (req, res) => {
+  try {
+    const r = saveSettings(req.body || {});
+    res.json({ ...r, settings: readableSettings() });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/admin/settings/reset', requireAdmin, (req, res) =>
+  res.json(resetSetting(String(req.body?.key || '')))
+);
+
+app.post('/api/admin/settings/test', requireAdmin, async (req, res) => {
+  const what = String(req.body?.what || '');
+  try {
+    if (what === 'asr') return res.json(await testAsr());
+    if (what === 'llm') return res.json(await testLlm());
+    if (['wecom', 'feishu', 'email'].includes(what)) return res.json(await testNotify(what));
+    res.status(400).json({ ok: false, error: '不认识的测试项' });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
 
 app.get('/api/health', async (req, res) => {
@@ -183,14 +256,17 @@ app.post('/api/rec/segment-end', async (req, res) => {
 
 // ---------------- 会议与产物 ----------------
 
-app.get('/api/meetings', (req, res) => res.json(listMeetings()));
+app.get('/api/meetings', requireArchive, (req, res) => res.json(listMeetings()));
 
-app.get('/api/meetings/:id', (req, res) => {
+app.get('/api/meetings/:id', requireArchive, (req, res) => {
   const id = safeId(req.params.id);
   const m = readMeeting(id);
   if (!m) return res.status(404).json({ error: '会议不存在' });
   const dir = meetingDir(id);
-  const readIf = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8') : null);
+  const readIf = (f) => {
+    const p = resolveArtifact(id, f);
+    return p ? fs.readFileSync(p, 'utf8') : null;
+  };
   res.json({
     ...m,
     files: meetingFiles(id),
@@ -201,7 +277,7 @@ app.get('/api/meetings/:id', (req, res) => {
   });
 });
 
-app.patch('/api/meetings/:id', async (req, res) => {
+app.patch('/api/meetings/:id', requireArchive, async (req, res) => {
   const id = safeId(req.params.id);
   if (!readMeeting(id)) return res.status(404).json({ error: '会议不存在' });
   const m = await updateMeeting(id, (data) => {
@@ -219,11 +295,12 @@ app.patch('/api/meetings/:id', async (req, res) => {
 });
 
 // 录制文件下载 / 拖动播放（支持 Range）
-app.get('/api/meetings/:id/files/:file', (req, res) => {
+app.get('/api/meetings/:id/files/:file', requireArchive, (req, res) => {
   const id = safeId(req.params.id);
   const file = path.basename(req.params.file);
-  const full = path.join(meetingDir(id), file);
-  if (!fs.existsSync(full)) return res.status(404).end();
+  // 录制文件在录制目录，纪要产物可能在纪要目录，两边都找
+  const full = [path.join(meetingDir(id), file), path.join(minutesDir(id), file)].find((p) => fs.existsSync(p));
+  if (!full) return res.status(404).end();
   const ext = path.extname(file).toLowerCase();
   const type =
     { '.webm': 'video/webm', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.md': 'text/markdown; charset=utf-8', '.json': 'application/json' }[ext] ||
@@ -233,23 +310,23 @@ app.get('/api/meetings/:id/files/:file', (req, res) => {
   fs.createReadStream(full).pipe(res);
 });
 
-app.post('/api/meetings/:id/process', async (req, res) => {
+app.post('/api/meetings/:id/process', requireArchive, async (req, res) => {
   const id = safeId(req.params.id);
   if (!readMeeting(id)) return res.status(404).json({ error: '会议不存在' });
   processMeeting(id, { force: Boolean(req.body?.force), skipSummary: Boolean(req.body?.skipSummary) }).catch(() => {});
   res.json({ ok: true, job: jobStatus(id) });
 });
 
-app.post('/api/meetings/:id/resummarize', async (req, res) => {
+app.post('/api/meetings/:id/resummarize', requireArchive, async (req, res) => {
   const id = safeId(req.params.id);
   resummarize(id).catch(() => {});
   res.json({ ok: true, job: jobStatus(id) });
 });
 
-app.get('/api/meetings/:id/job', (req, res) => res.json(jobStatus(safeId(req.params.id)) || { state: 'idle' }));
+app.get('/api/meetings/:id/job', requireArchive, (req, res) => res.json(jobStatus(safeId(req.params.id)) || { state: 'idle' }));
 
 // 手动推送纪要（会后自动推送失败、或想补发给某个渠道时用）
-app.post('/api/meetings/:id/notify', async (req, res) => {
+app.post('/api/meetings/:id/notify', requireArchive, async (req, res) => {
   const id = safeId(req.params.id);
   if (!readMeeting(id)) return res.status(404).json({ error: '会议不存在' });
   try {
@@ -339,6 +416,9 @@ server.listen(config.port, config.host, async () => {
   const ch = enabledChannels();
   const chOn = Object.entries(ch).filter(([, v]) => v).map(([k]) => ({ wecom: '企业微信', feishu: '飞书', email: '邮件' })[k]);
   console.log(`  纪要推送：  ${chOn.length ? chOn.join('、') : '未配置'}`);
+  console.log(
+    `  会议记录：  ${config.archivePassword ? '需要口令' : '⚠️  无口令，任何能访问服务的人都能查看全部历史记录'}`
+  );
   console.log(
     `  组网模式：  ${config.networkMode}${
       config.networkMode === 'tailscale'
