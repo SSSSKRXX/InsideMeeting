@@ -112,6 +112,59 @@ commit_batch "feat(tray): Mac 菜单栏程序管理服务启停
 所以终端/launchd/菜单栏三种启动方式随时可换，不会互相锁死。" \
   tray 打包桌面程序.command
 
+commit_batch "feat(storage): 录制与纪要保存位置可在界面上改
+
+录制是几百 MB 的音视频，纪要是几十 KB 的文本，分开配置才实用：
+大文件放外置盘，纪要留在系统盘跟着备份。
+
+- 网页后台列出常用位置和外接磁盘作为候选，也支持手敲绝对路径
+- 菜单栏程序直接弹系统文件夹选择框（它跑在服务器那台机器上）
+- 可选择同时搬移已有文件，同磁盘内用 rename 瞬间完成
+- 改动立即生效，不重启
+
+两个踩到的坑：
+- 校验目录必须异步且带超时。同步 fs 调用碰上掉线的网络盘会阻塞
+  整个事件循环，那时连打开后台改回本地路径都做不到。
+- 搬移纪要不能整目录搬。没分离配置时纪要目录就等于录制目录，
+  整目录搬会把音视频和 manifest 一起带走，历史会议全部消失。" \
+  server/src/storage.js
+
+commit_batch "build: Windows 打包与 GitHub Actions 云端构建
+
+electron-builder 只能在对应平台打对应平台的包，之前只有 macOS 的入口。
+
+- 新增 GitHub Actions：推 v 开头的 tag 就在云上同时打 mac 和 win，
+  产物自动传到 Releases。不需要有 Windows 电脑。
+- 新增 打包桌面程序.bat，在 Windows 本机打包
+- 服务控制器也支持 Windows：托盘图标改用彩色图（Windows 不认模板图标）、
+  左键点击手动弹菜单、补上 Windows 下常见的 node 和 ffmpeg 路径" \
+  .github 打包桌面程序.bat tray/package.json tray/main.js desktop/README.md 打包桌面程序.command
+
+commit_batch "feat(settings): 25 项常用配置搬到管理界面
+
+原来配 API Key 得 ssh 上服务器改 .env 再重启，这道门槛
+足以让整套系统在非技术团队里用不起来。
+
+- 运行时设置层覆盖 .env，存 data/settings.json，保存立即生效
+- 实现上是原地修改 config 对象：各模块都在函数里读 config.xxx
+  而不是 import 时取值，所以不用改任何调用方
+- 密钥只回传掩码，明文不出服务端；留空表示不改而非清空
+- 每个 AI 服务和推送渠道都有测试按钮，真发一次请求
+- 没配完时管理后台有醒目引导" \
+  server/src/settings.js web/src/views/SettingsPanel.jsx
+
+commit_batch "feat(security): 会议记录加访问口令
+
+历史录音和纪要是所有会议内容的全文，比「能不能进会」敏感得多，
+但之前对所有能访问服务的人完全开放。
+
+- 新增 ARCHIVE_PASSWORD，覆盖会议列表、详情、文件下载、
+  重新处理、推送等全部相关接口
+- 管理口令同样放行
+- 前端加解锁页，下载链接自动带 token
+- 未设置时启动日志和管理后台都会明确警告" \
+  server/src/config.js
+
 commit_batch "chore: 配置与文档
 
 - .env.example 补充推送渠道和房间安全相关配置

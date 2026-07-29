@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { paths } from './config.js';
+import { recordingsRoot, minutesRoot } from './storage.js';
 
 /**
  * 极简 JSON 文件存储。会议数量级很小（每天几十场），
@@ -8,11 +8,31 @@ import { paths } from './config.js';
  */
 
 function metaPath(meetingId) {
-  return path.join(paths.recordings, meetingId, 'manifest.json');
+  return path.join(recordingsRoot(), meetingId, 'manifest.json');
 }
 
+/** 录制文件（音视频 + manifest）所在目录 */
 export function meetingDir(meetingId) {
-  return path.join(paths.recordings, meetingId);
+  return path.join(recordingsRoot(), meetingId);
+}
+
+/** 纪要产物（逐字稿/纪要/待办）所在目录。没单独配就跟录制在一起。 */
+export function minutesDir(meetingId) {
+  return path.join(minutesRoot(), meetingId);
+}
+
+/**
+ * 找一个产物文件的真实位置。
+ * 先看纪要目录，再回退到录制目录 —— 后者是为了兼容
+ * 「分离配置之前」生成的那些会议，它们的纪要就放在录制目录里。
+ */
+export function resolveArtifact(meetingId, file) {
+  if (!file) return null;
+  for (const dir of [minutesDir(meetingId), meetingDir(meetingId)]) {
+    const p = path.join(dir, file);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 export function ensureMeeting(meetingId, init = {}) {
@@ -66,9 +86,10 @@ export function updateMeeting(meetingId, mutator) {
 }
 
 export function listMeetings() {
-  if (!fs.existsSync(paths.recordings)) return [];
+  const root = recordingsRoot();
+  if (!fs.existsSync(root)) return [];
   return fs
-    .readdirSync(paths.recordings)
+    .readdirSync(root)
     .map((id) => readMeeting(id))
     .filter(Boolean)
     .map((m) => ({
