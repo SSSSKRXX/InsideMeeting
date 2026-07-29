@@ -8,8 +8,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('insideMeeting', {
   isDesktop: true,
   getConfig: () => ipcRenderer.invoke('get-config'),
-  setServerUrl: (url) => ipcRenderer.invoke('set-server-url', url),
-  resetServerUrl: () => ipcRenderer.invoke('reset-server-url'),
+  chooseRole: (o) => ipcRenderer.invoke('choose-role', o),
+  serverAction: (o) => ipcRenderer.invoke('server-action', o),
+  switchRole: () => ipcRenderer.invoke('switch-role'),
+  onServerState: (fn) => {
+    const h = (_e, s) => fn(s);
+    ipcRenderer.on('server-state', h);
+    return () => ipcRenderer.removeListener('server-state', h);
+  },
 });
 
 /**

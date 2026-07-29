@@ -1,21 +1,34 @@
-const { app, BrowserWindow, desktopCapturer, session, ipcMain, Menu, shell, dialog } = require('electron');
-const path = require('node:path');
+const {
+  app, BrowserWindow, Tray, Menu, nativeImage, desktopCapturer, session,
+  ipcMain, shell, dialog, clipboard, Notification,
+} = require('electron');
 const fs = require('node:fs');
+const path = require('node:path');
+const srv = require('./server-manager.js');
 
 /**
- * InsideMeeting 桌面壳。
+ * InsideMeeting 桌面端。
  *
- * 网页版在 Win/Mac 上本来就能用，套 Electron 主要买三样东西：
- *   1. 共享屏幕时能带上系统声音（Windows 上浏览器只能抓标签页音频，抓不到系统音）
- *   2. 自签证书不再弹安全警告
- *   3. 一个能固定在 Dock / 任务栏的入口，不用每次翻收藏夹
+ * 同一个 App 有两种身份，首次启动时选：
+ *   服务器 —— App 内部起一个完整的服务端（自带 Node 和 ffmpeg，
+ *             机器上什么都不用装），别人连它
+ *   参会者 —— 填一个服务器地址，当浏览器用
+ *
+ * 服务器模式下顺带解决了源码部署时最烦的几件事：
+ * 不用装 Node、不用装 ffmpeg、不用 clone 代码、证书自动生成。
+ * 剩下唯一要自己装的是 Tailscale，那是网络层的事，App 管不了。
  */
 
-const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
+const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json');
+const DEFAULT_PORT = 8443;
+
+let win = null;
+let tray = null;
+let logWindow = null;
 
 function readConfig() {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    return JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf8'));
   } catch {
     return {};
   }
@@ -23,25 +36,26 @@ function readConfig() {
 
 function writeConfig(patch) {
   const next = { ...readConfig(), ...patch };
-  fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(next, null, 2));
+  fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
+  fs.writeFileSync(CONFIG_FILE(), JSON.stringify(next, null, 2));
   return next;
 }
 
-function serverUrl() {
-  return process.env.INSIDE_MEETING_URL || readConfig().serverUrl || '';
+function notify(title, body) {
+  if (Notification.isSupported()) new Notification({ title, body }).show();
 }
 
-let win = null;
+// ---------------- 窗口 ----------------
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
-    height: 820,
+    height: 840,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0e1116',
     title: 'InsideMeeting',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -51,26 +65,144 @@ function createWindow() {
     },
   });
 
-  const url = serverUrl();
-  if (url) win.loadURL(url);
-  else win.loadFile(path.join(__dirname, 'setup.html'));
-
-  // 外部链接用系统浏览器打开，不要在会议窗口里跳走
-  win.webContents.setWindowOpenHandler(({ url: u }) => {
-    shell.openExternal(u);
+  win.once('ready-to-show', () => win.show());
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
     return { action: 'deny' };
   });
-
   win.on('closed', () => {
     win = null;
   });
+
+  route();
 }
 
-/**
- * 屏幕共享。
- * 浏览器里 getDisplayMedia 会弹系统选择框，Electron 里要自己接管，
- * 顺便把系统音频一起抓进来 —— 这是桌面版相对网页版最实在的优势。
- */
+/** 根据当前身份决定加载哪个页面 */
+function route() {
+  const cfg = readConfig();
+  if (cfg.role === 'server') {
+    win.loadFile(path.join(__dirname, 'server.html'));
+  } else if (cfg.role === 'client' && cfg.serverUrl) {
+    win.loadURL(cfg.serverUrl);
+  } else {
+    win.loadFile(path.join(__dirname, 'setup.html'));
+  }
+}
+
+function openMeeting(url) {
+  if (!win) createWindow();
+  win.loadURL(url);
+}
+
+// ---------------- 托盘（服务器模式才显示）----------------
+
+function refreshTray() {
+  const cfg = readConfig();
+  if (cfg.role !== 'server') {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+
+  if (!tray) {
+    const iconFile = process.platform === 'darwin' ? 'trayTemplate.png' : 'icon.png';
+    const p = path.join(__dirname, 'assets', iconFile);
+    let img = nativeImage.createFromPath(p);
+    if (process.platform === 'darwin') img.setTemplateImage(true);
+    else img = img.resize({ width: 16, height: 16 });
+    tray = new Tray(img);
+    if (process.platform === 'win32') tray.on('click', () => tray.popUpContextMenu());
+  }
+
+  const st = srv.serverState();
+  const port = cfg.port || DEFAULT_PORT;
+  const url = srv.shareUrl(port);
+
+  const items = [
+    { label: st.running ? '● 服务运行中' : st.starting ? '○ 正在启动…' : '○ 服务未运行', enabled: false },
+    { type: 'separator' },
+    st.running
+      ? { label: '停止服务', click: () => srv.stopServer() }
+      : { label: '启动服务', click: () => startAndReport(port) },
+    { type: 'separator' },
+    {
+      label: '复制入会地址',
+      enabled: st.running,
+      click: () => {
+        clipboard.writeText(url);
+        notify('已复制', url);
+      },
+    },
+    { label: '打开会议页面', enabled: st.running, click: () => openMeeting(`https://localhost:${port}`) },
+    { label: '管理后台', enabled: st.running, click: () => openMeeting(`https://localhost:${port}/#/admin`) },
+    { type: 'separator' },
+    { label: '查看日志', click: openLogWindow },
+    { label: '打开数据目录', click: () => shell.openPath(srv.dataDir()) },
+    {
+      label: '开机自动启动',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (mi) => app.setLoginItemSettings({ openAtLogin: mi.checked, openAsHidden: true }),
+    },
+    { type: 'separator' },
+    { label: '切换身份…', click: switchRole },
+    { label: '退出（会停止服务）', click: () => { srv.stopServer(); app.quit(); } },
+  ];
+
+  tray.setToolTip(st.running ? `InsideMeeting · ${url}` : 'InsideMeeting · 未运行');
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+async function startAndReport(port) {
+  const r = await srv.startServer({ port });
+  if (!r.ok) dialog.showErrorBox('服务启动失败', r.error || '未知错误');
+  refreshTray();
+  win?.webContents.send('server-state', { ...srv.serverState(), url: srv.shareUrl(port) });
+  return r;
+}
+
+async function switchRole() {
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['取消', '重新选择'],
+    defaultId: 1,
+    cancelId: 0,
+    message: '切换身份会退出当前会议并停止本机服务，确定吗？',
+  });
+  if (response !== 1) return;
+  srv.stopServer();
+  writeConfig({ role: '', serverUrl: '' });
+  refreshTray();
+  if (!win) createWindow();
+  else win.loadFile(path.join(__dirname, 'setup.html'));
+}
+
+function openLogWindow() {
+  if (logWindow) return logWindow.focus();
+  logWindow = new BrowserWindow({ width: 900, height: 600, title: '服务日志', backgroundColor: '#0b0e13' });
+  const load = () => {
+    if (!logWindow || logWindow.isDestroyed()) return;
+    const text = srv.readLog().replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    logWindow.loadURL(
+      'data:text/html;charset=utf-8,' +
+        encodeURIComponent(
+          `<body style="margin:0;background:#0b0e13;color:#e6edf3;font:12px ui-monospace,Menlo,monospace">
+             <pre style="padding:14px;white-space:pre-wrap;word-break:break-all">${text}</pre>
+             <script>window.scrollTo(0,document.body.scrollHeight)</script>
+           </body>`
+        )
+    );
+  };
+  load();
+  const t = setInterval(load, 5000);
+  logWindow.on('closed', () => {
+    clearInterval(t);
+    logWindow = null;
+  });
+}
+
+// ---------------- 屏幕共享 ----------------
+
 function setupDisplayMedia() {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (request, callback) => {
@@ -78,7 +210,6 @@ function setupDisplayMedia() {
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
           thumbnailSize: { width: 320, height: 200 },
-          fetchWindowIcons: true,
         });
         if (!sources.length) return callback({});
 
@@ -98,7 +229,7 @@ function setupDisplayMedia() {
         const source = sources.find((s) => s.id === picked.id);
         if (!source) return callback({});
 
-        // loopback 只有 Windows 支持；macOS 需要装虚拟声卡（如 BlackHole）才能抓系统音
+        // loopback 只有 Windows 支持；macOS 需要 BlackHole 之类的虚拟声卡
         const withAudio = picked.withAudio && process.platform === 'win32';
         callback({ video: source, audio: withAudio ? 'loopback' : undefined });
       } catch {
@@ -109,12 +240,98 @@ function setupDisplayMedia() {
   );
 }
 
+// ---------------- IPC ----------------
+
+ipcMain.handle('get-config', () => {
+  const cfg = readConfig();
+  return {
+    role: cfg.role || '',
+    serverUrl: cfg.serverUrl || '',
+    port: cfg.port || DEFAULT_PORT,
+    platform: process.platform,
+    systemAudioSupported: process.platform === 'win32',
+    version: app.getVersion(),
+    server: srv.serverState(),
+    shareUrl: srv.shareUrl(cfg.port || DEFAULT_PORT),
+  };
+});
+
+ipcMain.handle('choose-role', async (e, { role, serverUrl, port }) => {
+  if (role === 'server') {
+    const p = Number(port) || DEFAULT_PORT;
+    writeConfig({ role: 'server', port: p });
+    const r = await startAndReport(p);
+    if (!r.ok) {
+      writeConfig({ role: '' });
+      return r;
+    }
+    refreshTray();
+    win.loadFile(path.join(__dirname, 'server.html'));
+    return { ok: true, url: srv.shareUrl(p) };
+  }
+
+  const clean = String(serverUrl || '').trim().replace(/\/$/, '');
+  if (!/^https?:\/\//.test(clean)) return { ok: false, error: '地址要以 http:// 或 https:// 开头' };
+  writeConfig({ role: 'client', serverUrl: clean });
+  win.loadURL(clean);
+  return { ok: true };
+});
+
+ipcMain.handle('server-action', async (e, { action, port }) => {
+  const p = Number(port) || readConfig().port || DEFAULT_PORT;
+  if (action === 'start') return startAndReport(p);
+  if (action === 'stop') {
+    const r = srv.stopServer();
+    refreshTray();
+    return r;
+  }
+  if (action === 'state') return { ok: true, ...srv.serverState(), url: srv.shareUrl(p) };
+  if (action === 'open') {
+    openMeeting(`https://localhost:${p}`);
+    return { ok: true };
+  }
+  if (action === 'admin') {
+    openMeeting(`https://localhost:${p}/#/admin`);
+    return { ok: true };
+  }
+  if (action === 'copy') {
+    clipboard.writeText(srv.shareUrl(p));
+    return { ok: true, url: srv.shareUrl(p) };
+  }
+  if (action === 'logs') return { ok: true, text: srv.readLog(40 * 1024) };
+  if (action === 'data-dir') {
+    shell.openPath(srv.dataDir());
+    return { ok: true };
+  }
+  return { ok: false, error: '未知操作' };
+});
+
+ipcMain.handle('switch-role', switchRole);
+
+// ---------------- 启动 ----------------
+
 app.whenReady().then(() => {
-  // 自签证书直接放行。这里只信任用户自己配置的那台服务器，
-  // 不是无差别忽略所有证书错误。
+  // 自签证书直接放行，但只对本机服务和用户配置的那台，不是无差别忽略
   app.on('certificate-error', (event, webContents, url, error, cert, callback) => {
-    const trusted = serverUrl();
-    if (trusted && url.startsWith(new URL(trusted).origin)) {
+    const cfg = readConfig();
+    const trusted = [cfg.serverUrl, `https://localhost:${cfg.port || DEFAULT_PORT}`, `https://127.0.0.1:${cfg.port || DEFAULT_PORT}`]
+      .filter(Boolean)
+      .map((u) => {
+        try {
+          return new URL(u).origin;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    let origin = null;
+    try {
+      origin = new URL(url).origin;
+    } catch { /* 忽略 */ }
+
+    // 服务器模式下自己起的服务用的就是自签证书，一律放行
+    if (readConfig().role === 'server' || (origin && trusted.includes(origin))) {
       event.preventDefault();
       callback(true);
     } else {
@@ -122,15 +339,23 @@ app.whenReady().then(() => {
     }
   });
 
-  // 摄像头 / 麦克风 / 屏幕权限，只对配置的服务器自动放行
   session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
-    const allowed = ['media', 'display-capture', 'clipboard-read', 'clipboard-sanitized-write', 'notifications'];
-    callback(allowed.includes(permission));
+    callback(['media', 'display-capture', 'clipboard-read', 'clipboard-sanitized-write', 'notifications'].includes(permission));
   });
 
   setupDisplayMedia();
   createWindow();
+  refreshTray();
   buildMenu();
+
+  srv.onServerEvent(() => {
+    refreshTray();
+    win?.webContents.send('server-state', srv.serverState());
+  });
+
+  // 服务器身份的话，开 App 就自动把服务拉起来
+  const cfg = readConfig();
+  if (cfg.role === 'server') startAndReport(cfg.port || DEFAULT_PORT);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -138,69 +363,34 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // 服务器模式关窗口不退出，服务继续在托盘里跑
+  if (readConfig().role === 'server') return;
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ---------- 与渲染进程通信 ----------
-
-ipcMain.handle('get-config', () => ({
-  serverUrl: serverUrl(),
-  platform: process.platform,
-  systemAudioSupported: process.platform === 'win32',
-  version: app.getVersion(),
-}));
-
-ipcMain.handle('set-server-url', (e, url) => {
-  const clean = String(url || '').trim().replace(/\/$/, '');
-  if (!/^https?:\/\//.test(clean)) throw new Error('地址要以 http:// 或 https:// 开头');
-  writeConfig({ serverUrl: clean });
-  win.loadURL(clean);
-  return clean;
-});
-
-ipcMain.handle('reset-server-url', () => {
-  writeConfig({ serverUrl: '' });
-  win.loadFile(path.join(__dirname, 'setup.html'));
-});
+app.on('before-quit', () => srv.stopServer());
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
-  const template = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
-    {
-      label: '会议',
-      submenu: [
-        {
-          label: '刷新',
-          accelerator: 'CmdOrCtrl+R',
-          click: () => win?.reload(),
-        },
-        {
-          label: '更换服务器地址…',
-          click: async () => {
-            const { response } = await dialog.showMessageBox(win, {
-              type: 'question',
-              buttons: ['取消', '更换'],
-              defaultId: 1,
-              message: '更换服务器地址会退出当前会议，确定吗？',
-            });
-            if (response === 1) {
-              writeConfig({ serverUrl: '' });
-              win.loadFile(path.join(__dirname, 'setup.html'));
-            }
-          },
-        },
-        { type: 'separator' },
-        { role: 'toggleDevTools', label: '开发者工具' },
-        { type: 'separator' },
-        isMac ? { role: 'close', label: '关闭窗口' } : { role: 'quit', label: '退出' },
-      ],
-    },
-    { role: 'editMenu', label: '编辑' },
-    {
-      label: '窗口',
-      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'togglefullscreen' }],
-    },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac ? [{ role: 'appMenu' }] : []),
+      {
+        label: '会议',
+        submenu: [
+          { label: '刷新', accelerator: 'CmdOrCtrl+R', click: () => win?.reload() },
+          { label: '返回主页', click: () => route() },
+          { type: 'separator' },
+          { label: '切换身份…', click: switchRole },
+          { label: '查看服务日志', click: openLogWindow },
+          { type: 'separator' },
+          { role: 'toggleDevTools', label: '开发者工具' },
+          { type: 'separator' },
+          isMac ? { role: 'close', label: '关闭窗口' } : { role: 'quit', label: '退出' },
+        ],
+      },
+      { role: 'editMenu', label: '编辑' },
+      { label: '窗口', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'togglefullscreen' }] },
+    ])
+  );
 }

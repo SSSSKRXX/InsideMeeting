@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>InsideMeeting 服务</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; padding: 36px 28px;
+    background: #0e1116; color: #e6edf3;
+    font: 14px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { margin: 0 0 26px; color: #8b97a6; font-size: 13px; }
+  .status {
+    display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+    background: #161b22; border: 1px solid #2a3341; border-radius: 10px; margin-bottom: 18px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #6b7280; flex: none; }
+  .dot.on { background: #22c55e; }
+  .dot.busy { background: #f59e0b; }
+  .status b { font-size: 15px; }
+  .status .spacer { flex: 1; }
+  .addr {
+    background: #161b22; border: 1px solid #2a3341; border-radius: 10px;
+    padding: 16px; margin-bottom: 18px;
+  }
+  .addr label { color: #8b97a6; font-size: 12px; display: block; margin-bottom: 6px; }
+  .addr .u {
+    font-family: ui-monospace, Menlo, monospace; font-size: 16px; color: #7dd3fc;
+    word-break: break-all; user-select: all;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  button {
+    background: #1c232d; border: 1px solid #2a3341; color: #e6edf3;
+    padding: 9px 16px; border-radius: 8px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #3b82f6; }
+  button.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #2563eb; }
+  button.danger { background: #ef4444; border-color: #ef4444; color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .steps { background: #161b22; border: 1px solid #2a3341; border-radius: 10px; padding: 16px 20px; }
+  .steps h3 { margin: 0 0 10px; font-size: 14px; }
+  .steps ol { margin: 0; padding-left: 20px; color: #c9d3de; }
+  .steps li { margin: 7px 0; font-size: 13px; }
+  .steps .muted { color: #8b97a6; font-size: 12px; }
+  .warn {
+    background: #3a2f12; border: 1px solid #6b5520; color: #fcd34d;
+    padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 18px;
+  }
+  code { background: #1c232d; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #000d; border: 1px solid #2a3341; padding: 9px 18px; border-radius: 999px; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>这台电脑正在当服务器</h1>
+    <p class="sub">把下面的地址发给同事，他们用浏览器打开就能参会。</p>
+
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <b id="stateText">读取中…</b>
+      <span class="spacer"></span>
+      <button id="toggle">启动服务</button>
+    </div>
+
+    <div class="warn" id="tsWarn" style="display:none">
+      没检测到 Tailscale 地址。同事在别的网络里就连不进来——先装 Tailscale 并登录同一个账号。
+    </div>
+
+    <div class="addr">
+      <label>入会地址</label>
+      <div class="u" id="url">—</div>
+      <div class="row">
+        <button class="primary" id="copy">复制地址</button>
+        <button id="open">在这台电脑上参会</button>
+        <button id="admin">管理后台</button>
+      </div>
+    </div>
+
+    <div class="steps">
+      <h3>还差这几步</h3>
+      <ol>
+        <li>
+          打开<b>管理后台</b>，填入转写和纪要的 API 密钥
+          <div class="muted">不填也能开会，只是不会生成会议纪要。</div>
+        </li>
+        <li>
+          在管理后台把<b>三道口令</b>设上：入会口令、查看会议记录的口令、管理口令
+          <div class="muted">尤其第二个——不设的话，能连进来的人就能翻到全部历史会议的录音和全文。</div>
+        </li>
+        <li>
+          <b>让这台电脑别休眠</b>
+          <div class="muted">睡着了所有人立刻断会。macOS：<code>sudo pmset -a sleep 0</code>；Windows 在电源设置里把睡眠改成「从不」。</div>
+        </li>
+        <li>
+          同事首次打开会看到<b>证书不安全的提示</b>
+          <div class="muted">自签证书的正常现象，点「高级 → 继续前往」即可，每台设备点一次。</div>
+        </li>
+      </ol>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button id="logs">查看日志</button>
+      <button id="dataDir">打开数据目录</button>
+      <button class="danger" id="switch">切换身份</button>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let state = { running: false, starting: false };
+  let port = 8443;
+
+  function toast(t) {
+    const d = document.createElement('div');
+    d.className = 'toast';
+    d.textContent = t;
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), 3000);
+  }
+
+  function render(s, url) {
+    state = s;
+    $('dot').className = 'dot' + (s.running ? ' on' : s.starting ? ' busy' : '');
+    $('stateText').textContent = s.running ? '服务运行中' : s.starting ? '正在启动…' : '服务未运行';
+    $('toggle').textContent = s.running ? '停止服务' : '启动服务';
+    $('toggle').disabled = Boolean(s.starting);
+    $('url').textContent = s.running ? (url || '—') : '（服务未运行）';
+    for (const id of ['copy', 'open', 'admin']) $(id).disabled = !s.running;
+    $('tsWarn').style.display = s.lan && s.lan.startsWith('100.') ? 'none' : 'block';
+  }
+
+  async function refresh() {
+    const r = await window.insideMeeting.serverAction({ action: 'state' });
+    render(r, r.url);
+  }
+
+  async function init() {
+    const cfg = await window.insideMeeting.getConfig();
+    port = cfg.port || 8443;
+    render(cfg.server, cfg.shareUrl);
+    refresh();
+  }
+
+  $('toggle').onclick = async () => {
+    $('toggle').disabled = true;
+    const action = state.running ? 'stop' : 'start';
+    if (action === 'start') $('stateText').textContent = '正在启动…';
+    const r = await window.insideMeeting.serverAction({ action, port });
+    if (r && r.ok === false) toast(r.error || '操作失败');
+    refresh();
+  };
+
+  $('copy').onclick = async () => {
+    const r = await window.insideMeeting.serverAction({ action: 'copy', port });
+    toast('已复制：' + (r.url || ''));
+  };
+  $('open').onclick = () => window.insideMeeting.serverAction({ action: 'open', port });
+  $('admin').onclick = () => window.insideMeeting.serverAction({ action: 'admin', port });
+  $('logs').onclick = async () => {
+    const r = await window.insideMeeting.serverAction({ action: 'logs' });
+    const w = window.open('', '_blank');
+    if (w) w.document.body.innerHTML = '<pre style="white-space:pre-wrap">' + (r.text || '') + '</pre>';
+    else toast('日志已在托盘菜单里提供');
+  };
+  $('dataDir').onclick = () => window.insideMeeting.serverAction({ action: 'data-dir' });
+  $('switch').onclick = () => window.insideMeeting.switchRole();
+
+  window.insideMeeting.onServerState((s) => render(s, s.url));
+  init();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>

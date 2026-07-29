@@ -6,67 +6,138 @@
 <style>
   * { box-sizing: border-box; }
   body {
-    margin: 0; height: 100vh; display: grid; place-items: center;
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 40px 24px;
     background: #0e1116; color: #e6edf3;
     font: 14px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   }
-  .card { width: 440px; padding: 32px; }
-  h1 { margin: 0 0 6px; font-size: 24px; }
-  p.sub { margin: 0 0 24px; color: #8b97a6; font-size: 13px; }
+  .wrap { width: min(720px, 100%); }
+  h1 { margin: 0 0 6px; font-size: 26px; text-align: center; }
+  .sub { margin: 0 0 32px; color: #8b97a6; font-size: 13px; text-align: center; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card {
+    background: #161b22; border: 2px solid #2a3341; border-radius: 12px; padding: 22px;
+    cursor: pointer; transition: border-color .15s;
+  }
+  .card:hover { border-color: #3b82f6; }
+  .card.on { border-color: #3b82f6; background: #16223a; }
+  .card h2 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; color: #8b97a6; font-size: 12.5px; line-height: 1.65; }
+  .card ul { margin: 10px 0 0; padding-left: 18px; color: #8b97a6; font-size: 12px; }
+  .card li { margin: 3px 0; }
+  .panel { margin-top: 22px; display: none; }
+  .panel.on { display: block; }
   label { display: block; font-size: 13px; color: #8b97a6; margin-bottom: 6px; }
   input {
     width: 100%; background: #1c232d; border: 1px solid #2a3341; color: #e6edf3;
     padding: 11px 12px; border-radius: 8px; font: inherit;
   }
   input:focus { outline: none; border-color: #3b82f6; }
-  button {
+  button.go {
     width: 100%; margin-top: 16px; background: #3b82f6; border: 0; color: #fff;
-    padding: 11px; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer;
+    padding: 12px; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer;
   }
-  button:hover { background: #2563eb; }
+  button.go:hover { background: #2563eb; }
+  button.go:disabled { opacity: .6; cursor: default; }
   .err { color: #fca5a5; font-size: 13px; margin-top: 12px; min-height: 20px; }
-  .tip { color: #8b97a6; font-size: 12px; margin-top: 20px; border-top: 1px solid #2a3341; padding-top: 16px; }
+  .tip { color: #8b97a6; font-size: 12px; margin-top: 18px; border-top: 1px solid #2a3341; padding-top: 14px; }
   code { background: #1c232d; padding: 1px 6px; border-radius: 4px; }
+  @media (max-width: 640px) { .cards { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
-  <div class="card">
+  <div class="wrap">
     <h1>InsideMeeting</h1>
-    <p class="sub">第一次使用，先填入你们的会议服务器地址</p>
+    <p class="sub">第一次使用，先确定这台电脑的角色</p>
 
-    <label>服务器地址</label>
-    <input id="url" placeholder="https://macmini.你的tailnet.ts.net:8443" autofocus />
-    <button id="go">连接</button>
-    <div class="err" id="err"></div>
+    <div class="cards">
+      <div class="card" id="card-server">
+        <h2>这台电脑当服务器</h2>
+        <p>会议在这台机器上运行，其他人连过来。</p>
+        <ul>
+          <li>不用装 Node.js 或 ffmpeg，都在 App 里</li>
+          <li>证书自动生成</li>
+          <li>需要一直开着不休眠</li>
+        </ul>
+      </div>
 
-    <div class="tip">
-      地址由管理员提供，通常形如 <code>https://xxx.ts.net:8443</code>。<br />
-      连不上的话，先确认 Tailscale 已经启动并显示 Connected。
+      <div class="card" id="card-client">
+        <h2>我只是参会</h2>
+        <p>连到别人已经跑起来的服务器。</p>
+        <ul>
+          <li>填一个地址，填一次就记住</li>
+          <li>能共享屏幕并带上系统声音</li>
+          <li>其实用浏览器也可以</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-server">
+      <label>服务端口</label>
+      <input id="port" value="8443" />
+      <button class="go" id="go-server">启动服务</button>
+      <div class="err" id="err-server"></div>
+      <div class="tip">
+        还需要装 <b>Tailscale</b> 并登录，同事才能连进来——那是网络层的事，App 代劳不了。
+        装好后本机会有一个 <code>100.x.x.x</code> 的地址，启动后会显示出来。
+      </div>
+    </div>
+
+    <div class="panel" id="panel-client">
+      <label>服务器地址</label>
+      <input id="url" placeholder="https://100.x.x.x:8443" />
+      <button class="go" id="go-client">连接</button>
+      <div class="err" id="err-client"></div>
+      <div class="tip">
+        地址问组织会议的人要，形如 <code>https://100.64.1.2:8443</code>。<br />
+        连不上先确认 Tailscale 已启动并显示 Connected。
+      </div>
     </div>
   </div>
 
 <script>
-  const input = document.getElementById('url');
-  const err = document.getElementById('err');
-  const go = document.getElementById('go');
+  const $ = (id) => document.getElementById(id);
+  let role = '';
 
-  async function submit() {
-    err.textContent = '';
-    const v = input.value.trim();
-    if (!v) return (err.textContent = '请填写服务器地址');
-    go.disabled = true;
-    go.textContent = '连接中…';
+  function pick(r) {
+    role = r;
+    $('card-server').classList.toggle('on', r === 'server');
+    $('card-client').classList.toggle('on', r === 'client');
+    $('panel-server').classList.toggle('on', r === 'server');
+    $('panel-client').classList.toggle('on', r === 'client');
+    if (r === 'client') $('url').focus(); else $('port').focus();
+  }
+
+  $('card-server').onclick = () => pick('server');
+  $('card-client').onclick = () => pick('client');
+
+  async function submit(r) {
+    const errBox = $(r === 'server' ? 'err-server' : 'err-client');
+    const btn = $(r === 'server' ? 'go-server' : 'go-client');
+    errBox.textContent = '';
+    btn.disabled = true;
+    btn.textContent = r === 'server' ? '正在启动…（首次可能要十几秒）' : '连接中…';
     try {
-      await window.insideMeeting.setServerUrl(v);
+      const res = await window.insideMeeting.chooseRole({
+        role: r,
+        port: $('port').value,
+        serverUrl: $('url').value,
+      });
+      if (!res.ok) {
+        errBox.textContent = res.error || '失败';
+        btn.disabled = false;
+        btn.textContent = r === 'server' ? '启动服务' : '连接';
+      }
     } catch (e) {
-      err.textContent = e.message || String(e);
-      go.disabled = false;
-      go.textContent = '连接';
+      errBox.textContent = e.message || String(e);
+      btn.disabled = false;
+      btn.textContent = r === 'server' ? '启动服务' : '连接';
     }
   }
 
-  go.onclick = submit;
-  input.onkeydown = (e) => e.key === 'Enter' && submit();
+  $('go-server').onclick = () => submit('server');
+  $('go-client').onclick = () => submit('client');
+  $('url').onkeydown = (e) => e.key === 'Enter' && submit('client');
+  $('port').onkeydown = (e) => e.key === 'Enter' && submit('server');
 </script>
 </body>
 </html>

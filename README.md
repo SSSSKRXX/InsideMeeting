@@ -43,7 +43,7 @@
 - **虚拟背景与增强降噪**：MediaPipe 人像分割做背景模糊/换图，噪声门压掉底噪
 - 会中聊天、举手、请他人静音、浏览器本地字幕
 - 电脑和手机都能用（手机不支持发起屏幕共享，系统限制）
-- 可选的 [Electron 桌面客户端](desktop/README.md)，主要为了共享屏幕时能带系统声音
+- [桌面 App](desktop/README.md) 内嵌完整服务端：双击安装就能当服务器，不用装 Node 和 ffmpeg
 
 ## 30 秒了解设计取舍
 
@@ -56,6 +56,16 @@
 **3. 会中和会后是两条独立的转写链路。** 会中每 15 秒一个独立小片，延迟优先；会后用完整音轨重转一遍，质量优先。会中识别歪的地方，会后那份仍然是准的。
 
 ## 快速开始
+
+### 最省事：装桌面 App
+
+去 [Releases](https://github.com/SSSSKRXX/InsideMeeting/releases) 下载对应系统的安装包，双击安装。首次启动选「**这台电脑当服务器**」，服务就跑起来了。
+
+**不需要装 Node.js、不需要装 ffmpeg、不需要下载源码、不需要改配置文件**——都在 App 里。界面会直接显示入会地址，复制发给同事即可。
+
+> 还是要装 [Tailscale](https://tailscale.com/download) 并让所有人登录同一个账号，否则跨网络连不通。这是网络层的事，App 代劳不了。全员在同一个局域网可以跳过。
+
+### 或者：从源码跑
 
 ```bash
 git clone https://github.com/SSSSKRXX/InsideMeeting.git
@@ -76,8 +86,8 @@ bash scripts/start.sh     # Windows: powershell -ExecutionPolicy Bypass -File sc
 |---|---|
 | 本文档 | 部署、配置、架构说明 |
 | [`InsideMeeting 使用说明.pdf`](InsideMeeting%20使用说明.pdf) | 发给团队成员的使用手册，假设读者完全不懂技术 |
-| [`desktop/README.md`](desktop/README.md) | Electron 桌面客户端：什么时候需要它、怎么打包 |
-| [`tray/`](tray/) | Mac 菜单栏程序：管服务启停，不用开终端 |
+| [`desktop/README.md`](desktop/README.md) | 桌面 App：内嵌服务端的原理、怎么打包 |
+| [`tray/`](tray/) | 早期的菜单栏程序，已被桌面 App 取代，保留给从源码部署的人 |
 | [`deploy/windows-autostart.md`](deploy/windows-autostart.md) | Windows 开机自启 |
 | [`deploy/turnserver.conf`](deploy/turnserver.conf) | 走公网时的 coturn 配置 |
 | `demo.html` | 静态界面预览，双击即可打开 |

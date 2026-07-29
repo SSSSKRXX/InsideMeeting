@@ -1,16 +1,25 @@
 {
   "name": "inside-meeting-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "InsideMeeting 桌面客户端",
+  "description": "InsideMeeting 桌面端：可作为服务器运行，也可只作为参会客户端",
   "main": "main.js",
   "author": "SSSSKRXX",
   "license": "MIT",
   "scripts": {
+    "prepare-bundle": "node scripts/prepare.js",
     "start": "electron .",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win"
+    "dist": "npm run prepare-bundle && electron-builder",
+    "dist:mac": "npm run prepare-bundle && electron-builder --mac",
+    "dist:win": "npm run prepare-bundle && electron-builder --win"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "selfsigned": "^5.5.0",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -20,9 +29,23 @@
     "appId": "com.inside.meeting",
     "productName": "InsideMeeting",
     "directories": { "output": "release" },
-    "files": ["main.js", "preload.js", "setup.html"],
+    "//asar": "关掉 asar：服务端是被 fork 成独立进程跑的，普通文件路径最省事也最不容易出意外",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "cert.js",
+      "server-manager.js",
+      "setup.html",
+      "server.html",
+      "assets/**",
+      "bundled/**",
+      "node_modules/**"
+    ],
+    "artifactName": "InsideMeeting-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.business",
+      "icon": "assets/icon.png",
       "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
       "extendInfo": {
         "NSCameraUsageDescription": "会议需要使用摄像头",
@@ -31,14 +54,13 @@
       }
     },
     "win": {
-      "icon": "../tray/assets/icon.png",
+      "icon": "assets/icon.png",
       "target": [{ "target": "nsis", "arch": ["x64"] }]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "InsideMeeting"
-    },
-    "artifactName": "InsideMeeting-Client-${version}-${arch}.${ext}"
+    }
   }
 }

@@ -32,3 +32,6 @@ Thumbs.db
 # 生成说明书时的中间产物
 docs/*.pdf
 !InsideMeeting 使用说明.pdf
+
+# 桌面 App 打包前生成的内容（由 desktop/scripts/prepare.js 复制而来）
+desktop/bundled/

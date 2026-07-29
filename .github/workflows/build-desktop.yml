@@ -38,28 +38,23 @@ jobs:
         with:
           node-version: 20
 
-      # ---------- 会议客户端：两个平台都打 ----------
-      - name: 安装依赖（桌面客户端）
+      # 桌面 App 里内嵌了完整服务端，所以要先把前端构建出来
+      - name: 构建前端
+        run: |
+          npm install
+          npm run build
+
+      - name: 安装依赖（桌面 App）
         working-directory: desktop
         run: npm install
 
-      - name: 打包桌面客户端
+      # prepare 脚本会把 server/src 和 web/dist 复制进 desktop/bundled
+      - name: 打包桌面 App
         working-directory: desktop
         run: npm run dist
         env:
           # 不做代码签名。要签名的话把证书配成 secrets，
           # 参考 https://www.electron.build/code-signing
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      # ---------- 服务菜单栏程序：两个平台都打 ----------
-      - name: 安装依赖（服务控制器）
-        working-directory: tray
-        run: npm install
-
-      - name: 打包服务控制器
-        working-directory: tray
-        run: npm run dist
-        env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       # 先把 electron-builder 到底产出了什么原样打出来，
@@ -68,17 +63,17 @@ jobs:
         shell: bash
         if: always()
         run: |
+          echo "===== desktop/bundled ====="
+          ls -la desktop/bundled/ 2>&1 || echo "（目录不存在）"
           echo "===== desktop/release ====="
           ls -la desktop/release/ 2>&1 || echo "（目录不存在）"
-          echo "===== tray/release ====="
-          ls -la tray/release/ 2>&1 || echo "（目录不存在）"
 
       - name: 收集产物
         shell: bash
         run: |
           mkdir -p out
           # 不用 find -exec，避免文件名里有空格或中文时出问题
-          for d in desktop/release tray/release; do
+          for d in desktop/release; do
             [ -d "$d" ] || continue
             for f in "$d"/*.dmg "$d"/*.exe "$d"/*.zip "$d"/*.AppImage; do
               [ -f "$f" ] && cp -v "$f" out/
@@ -134,12 +129,28 @@ jobs:
 
             | 你的系统 | 下载哪个 |
             |---|---|
-            | macOS（参会用） | `InsideMeeting-*.dmg` |
-            | Windows（参会用） | `InsideMeeting Setup *.exe` |
-            | 服务器控制器 | 文件名带「服务」的那个 |
+            | macOS（Apple 芯片） | `InsideMeeting-*-arm64.dmg` |
+            | macOS（Intel） | `InsideMeeting-*-x64.dmg` |
+            | Windows | `InsideMeeting-*-x64.exe` |
 
-            **参会本来不需要装任何东西**，浏览器打开会议地址就能用。
-            桌面客户端主要解决一件事：共享屏幕时能带上系统声音（浏览器只能抓标签页音频）。
+            **一个 App 两种用法**，首次启动时选：
+
+            - **这台电脑当服务器** —— App 内部会起一个完整的服务端。
+              不用装 Node.js、不用装 ffmpeg、不用下载源码，证书自动生成。
+              这台机器需要一直开着。
+            - **我只是参会** —— 填一个别人给的服务器地址就行。
+
+            ### 还是需要 Tailscale
+
+            大家在不同网络时，所有设备要装 [Tailscale](https://tailscale.com/download)
+            并登录同一个账号，否则连不通。这是网络层的事，App 代劳不了。
+
+            全员在同一个局域网的话可以跳过。
+
+            ### 参会其实不用装 App
+
+            浏览器打开会议地址就能用。装 App 只解决一件事：
+            共享屏幕时能带上系统声音（浏览器只能抓标签页音频）。
 
             ### 首次打开会被系统拦
 

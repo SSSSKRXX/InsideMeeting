@@ -1,80 +1,104 @@
-# InsideMeeting 桌面客户端
+# InsideMeeting 桌面 App
 
-网页版在 Windows 和 macOS 上本来就能用。套一层 Electron 主要买三样东西：
+一个 App 两种身份，首次启动时选。
 
-1. **共享屏幕时能带上系统声音**。浏览器里只能抓「标签页音频」，抓不到系统音——放本地视频、演示带声音的软件时对方是听不到的。桌面版在 Windows 上可以直接 loopback 抓系统音。
-2. **自签证书不再弹安全警告**。桌面版只对你配置的那台服务器放行证书，不是无差别忽略。
-3. **一个能钉在 Dock / 任务栏的入口**，不用每次翻收藏夹。
+## 这台电脑当服务器
 
-如果你已经用 Tailscale 拿到了正式证书，第 2 条就没意义了；只有第 1 条是网页版给不了的。**不需要共享系统声音的话，直接用网页版就行，不用装这个。**
+App 内部会起一个完整的服务端。**机器上什么都不用装**：
+
+| | 从源码部署 | 装这个 App |
+|---|---|---|
+| Node.js | 要自己装 | App 自带 |
+| ffmpeg | 要自己装 | App 自带 |
+| 下载代码、跑脚本 | 要 | 不用 |
+| HTTPS 证书 | 跑脚本生成 | 自动生成 |
+| 改配置 | 编辑 .env | 界面上填 |
+
+启动后界面会显示入会地址，复制发给同事即可。托盘图标里能随时启停服务、看日志、开机自启。
+
+**唯一还需要自己装的是 Tailscale**——那是网络层的事，App 管不了。全员在同一个局域网的话可以跳过。
+
+## 我只是参会
+
+填一个别人给的服务器地址，填一次就记住。
+
+其实**参会用浏览器就够了**，装 App 只多解决一件事：共享屏幕时能带上系统声音（浏览器只能抓单个标签页的音频）。不需要这个功能就别装。
+
+---
+
+## 它是怎么把服务端塞进去的
+
+关键是 `ELECTRON_RUN_AS_NODE=1`。设了这个环境变量，Electron 的可执行文件就会当成纯 Node 来跑——所以用户机器上不需要装 Node.js，App 自带的那份就够了。ffmpeg 同理，用 `ffmpeg-static` 打包进来。
+
+**服务端代码一行没改。** 它只是被 fork 起来的一个普通 Node 进程，所有差异都通过环境变量传进去（数据目录、证书路径、ffmpeg 路径、端口）。这样「从源码部署」和「装 App」跑的是完全相同的服务端，不会出现只在某一种方式下才有的 bug。
+
+```
+desktop/
+├── main.js             主进程：身份路由、托盘、屏幕共享接管、证书放行
+├── server-manager.js   fork 服务进程、健康检查、日志
+├── cert.js             自签证书（纯 JS，不依赖 openssl）
+├── preload.js          桥接层 + 自绘的屏幕共享选源界面
+├── setup.html          首次启动：选身份
+├── server.html         服务器模式的控制面板
+├── scripts/prepare.js  打包前把 server/src 和 web/dist 复制进 bundled/
+└── bundled/            打包产物（gitignore，由 prepare 生成）
+```
+
+几个刻意的选择：
+
+**`asar: false`** —— 服务端是被 fork 成独立进程跑的，普通文件路径最省事，也不用担心 asar 里执行二进制的各种坑。
+
+**数据存在 `userData`**，不在 App 内部。这样升级 App 不会丢会议记录，卸载时也知道去哪清数据。
+
+**证书按内网 IP 签发并记录**，网络环境变了（换 WiFi、Tailscale 重新分配）会自动重签，否则地址对不上。
 
 ## 开发运行
 
 ```bash
+# 先在项目根目录构建前端
+npm install && npm run build
+
 cd desktop
 npm install
 npm start
 ```
 
-第一次启动会让你填服务器地址，填一次就记住了。也可以用环境变量跳过：
-
-```bash
-INSIDE_MEETING_URL=https://macmini.xxx.ts.net:8443 npm start
-```
+开发模式下 `bundled/` 不存在，会自动回退到上级目录的 `server/src`，改服务端代码重启 App 即可生效。
 
 ## 打包
 
 ```bash
-npm run dist:mac    # 产出 dmg（arm64 + x64）
-npm run dist:win    # 产出 exe 安装包
+cd desktop
+npm run dist:mac    # dmg（arm64 + x64）
+npm run dist:win    # exe
 ```
 
-产物在 `desktop/release/`。
+产物在 `desktop/release/`。`npm run dist` 会自动先跑 `prepare-bundle`。
 
-**只能在对应平台上打包对应平台的产物**——Mac 上打不出 Windows 的 exe（严格说 electron-builder 配合 wine 可以，但很折腾）。三个办法：
+**只能在对应平台打对应平台的包。** 三个办法：
 
 | 办法 | 怎么做 |
 |---|---|
-| **GitHub Actions（推荐）** | 推一个 `v` 开头的 tag，云上两个平台一起打，产物自动传到 Releases。你不需要有 Windows 电脑 |
-| Windows 本机打 | 在 Windows 上双击项目根目录的 `打包桌面程序.bat` |
-| Mac 本机打 | 双击 `打包桌面程序.command`，只能出 dmg |
+| **GitHub Actions（推荐）** | 推一个 `v` 开头的 tag，云上两个平台一起打，产物自动传到 Releases |
+| Windows 本机 | 双击项目根目录的 `打包桌面程序.bat` |
+| Mac 本机 | 双击 `打包桌面程序.command` |
 
-GitHub Actions 的用法：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-然后去仓库的 Actions 页面看进度，打完在 Releases 里下载。也可以在 Actions 页面手动点 `Run workflow` 触发，不打 tag 只出构建产物。
-
-打出来的包没有代码签名，用户首次打开会被系统拦：
-
-- macOS：右键点图标 → 打开 → 再点「打开」。或者 `xattr -cr /Applications/InsideMeeting.app`
-- Windows：SmartScreen 提示时点「更多信息」→「仍要运行」
-
-内部工具这样够用了。要去掉这些提示得买开发者证书，macOS 一年 99 美元，Windows 的 EV 证书更贵。
+打出来的包没有代码签名，首次打开会被系统拦（macOS 右键打开，Windows 点「仍要运行」）。要去掉提示得买开发者证书，macOS 一年 99 美元，内部工具不值当。
 
 ## 系统声音共享的平台差异
 
 | 平台 | 能不能抓系统声音 |
 |---|---|
-| Windows | ✅ 直接支持，勾选「同时共享系统声音」即可 |
-| macOS | ❌ 系统不允许。需要装 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 之类的虚拟声卡，把系统输出路由过去，再在会议里把它选成麦克风 |
+| Windows | ✅ 勾选「同时共享系统声音」即可 |
+| macOS | ❌ 系统不允许。需要装 [BlackHole](https://github.com/ExistentialAudio/BlackHole) 之类的虚拟声卡 |
 | 网页版 | 只能抓单个浏览器标签页的音频 |
 
-这是 macOS 的系统限制，不是 Electron 的问题——所有会议软件在 Mac 上抓系统音都得靠虚拟声卡。
+这是 macOS 的系统限制，所有会议软件在 Mac 上都得靠虚拟声卡。
 
-## 目录结构
+## 未在真实桌面环境验证
 
-```
-desktop/
-├── main.js       主进程：窗口、证书放行、屏幕共享接管、菜单
-├── preload.js    桥接层 + 自绘的屏幕共享选源界面
-├── setup.html    首次启动填服务器地址的页面
-└── package.json  含 electron-builder 打包配置
-```
+开发环境没有图形界面，所以窗口、托盘、屏幕共享选源这些只保证语法和 API 用法正确，首次运行可能需要小修。
 
-## 未验证
+**已经实测过的**：证书生成（含复用逻辑）、服务端在 bundled 布局下正常启动、HTTPS 可访问、前端和静态资源正常加载、数据写到指定目录而不是 App 内部。
 
-这部分代码没有在真实桌面环境跑过（开发环境没有图形界面）。语法和 Electron API 用法都对，但首次运行可能需要小修。真跑起来有问题的话，`npm start` 的终端输出和 `开发者工具` 里的报错是排查起点。
+出问题的话，`npm start` 的终端输出和托盘菜单里的「查看日志」是排查起点。
