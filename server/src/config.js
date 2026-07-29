@@ -32,6 +32,8 @@ export const config = {
   joinPassword: process.env.JOIN_PASSWORD || '',
   // 管理接口口令（查看/删除录制、触发纪要生成）
   adminToken: process.env.ADMIN_TOKEN || '',
+  // 查看历史录音与纪要的口令（留空则不校验）
+  archivePassword: process.env.ARCHIVE_PASSWORD || '',
 
   // 录制
   recording: {
