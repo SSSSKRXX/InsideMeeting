@@ -1,0 +1,119 @@
+name: 打包桌面程序
+
+# electron-builder 只能在对应平台打对应平台的包，
+# 所以这里用 GitHub 的 macOS 和 Windows 两台机器分别打，再汇总到一个 Release。
+# 你不需要有 Windows 电脑。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 打完包后创建 Release
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            artifact: '*.dmg'
+          - os: windows-latest
+            name: Windows
+            artifact: '*.exe'
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---------- 会议客户端：两个平台都打 ----------
+      - name: 安装依赖（桌面客户端）
+        working-directory: desktop
+        run: npm install
+
+      - name: 打包桌面客户端
+        working-directory: desktop
+        run: npm run dist
+        env:
+          # 不做代码签名。要签名的话把证书配成 secrets，
+          # 参考 https://www.electron.build/code-signing
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # ---------- 服务菜单栏程序：两个平台都打 ----------
+      - name: 安装依赖（服务控制器）
+        working-directory: tray
+        run: npm install
+
+      - name: 打包服务控制器
+        working-directory: tray
+        run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: 收集产物
+        shell: bash
+        run: |
+          mkdir -p out
+          find desktop/release tray/release -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) \
+            -exec cp {} out/ \; 2>/dev/null || true
+          ls -lh out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InsideMeeting-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: 整理文件
+        run: |
+          mkdir -p release
+          find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            ## 下载
+
+            | 你的系统 | 下载哪个 |
+            |---|---|
+            | macOS（参会用） | `InsideMeeting-*.dmg` |
+            | Windows（参会用） | `InsideMeeting Setup *.exe` |
+            | 服务器控制器 | 文件名带「服务」的那个 |
+
+            **参会本来不需要装任何东西**，浏览器打开会议地址就能用。
+            桌面客户端主要解决一件事：共享屏幕时能带上系统声音（浏览器只能抓标签页音频）。
+
+            ### 首次打开会被系统拦
+
+            这些包没有代码签名，属于正常现象：
+
+            - **macOS**：右键点图标 → 打开 → 再点一次「打开」
+            - **Windows**：SmartScreen 提示时点「更多信息」→「仍要运行」
