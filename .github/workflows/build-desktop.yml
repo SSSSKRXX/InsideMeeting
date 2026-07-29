@@ -113,12 +113,21 @@ jobs:
       - name: 整理文件
         run: |
           mkdir -p release
-          find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) -exec cp {} release/ \;
+          find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) -print0 \
+            | while IFS= read -r -d '' f; do
+                # 保险：万一还有空格，统一换成下划线。
+                # v0.1.0 时 Windows 客户端就是因为文件名带空格没能进 Release。
+                base=$(basename "$f" | tr ' ' '_')
+                cp -v "$f" "release/$base"
+              done
+          echo "===== 将上传到 Release 的文件 ====="
           ls -lh release/
+          echo "共 $(ls -1 release/ | wc -l) 个"
 
       - uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             ## 下载
