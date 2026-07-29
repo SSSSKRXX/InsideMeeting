@@ -62,20 +62,41 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # 先把 electron-builder 到底产出了什么原样打出来，
+      # 构建成功但产物没进 Release 时，这段日志是唯一的线索。
+      - name: 列出构建产物
+        shell: bash
+        if: always()
+        run: |
+          echo "===== desktop/release ====="
+          ls -la desktop/release/ 2>&1 || echo "（目录不存在）"
+          echo "===== tray/release ====="
+          ls -la tray/release/ 2>&1 || echo "（目录不存在）"
+
       - name: 收集产物
         shell: bash
         run: |
           mkdir -p out
-          find desktop/release tray/release -maxdepth 1 -type f \
-            \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) \
-            -exec cp {} out/ \; 2>/dev/null || true
-          ls -lh out/
+          # 不用 find -exec，避免文件名里有空格或中文时出问题
+          for d in desktop/release tray/release; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*.dmg "$d"/*.exe "$d"/*.zip "$d"/*.AppImage; do
+              [ -f "$f" ] && cp -v "$f" out/
+            done
+          done
+          echo "===== 待上传 ====="
+          ls -la out/
+          # 一个都没有说明构建有问题，直接让这一步失败，别让它静默过去
+          if [ -z "$(ls -A out/ 2>/dev/null)" ]; then
+            echo "::error::${{ matrix.name }} 没有产出任何安装包"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: InsideMeeting-${{ matrix.name }}
           path: out/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   release:
     needs: build

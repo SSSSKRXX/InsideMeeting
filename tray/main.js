@@ -50,7 +50,6 @@ function guessProjectDir() {
     path.resolve(__dirname, '..'),
     path.join(os.homedir(), 'InsideMeeting'),
     path.join(os.homedir(), 'Desktop', 'InsideMeeting'),
-    path.join(os.homedir(), 'Desktop', 'AgentProgram', 'InsideMeeting'),
     path.join(os.homedir(), 'Documents', 'InsideMeeting'),
     'C:\\InsideMeeting',
   ];

@@ -18,6 +18,10 @@ certs/
 .env
 server/.env
 
+# 本地用的 git 推送脚本，不属于项目本身
+推送到GitHub.command
+提交并推送.command
+
 *.log
 .DS_Store
 Thumbs.db

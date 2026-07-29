@@ -31,11 +31,14 @@
       }
     },
     "win": {
+      "icon": "../tray/assets/icon.png",
       "target": [{ "target": "nsis", "arch": ["x64"] }]
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "InsideMeeting"
+    },
+    "artifactName": "InsideMeeting-Client-${version}-${arch}.${ext}"
   }
 }

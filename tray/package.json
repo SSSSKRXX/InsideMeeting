@@ -37,6 +37,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "InsideMeeting 服务"
-    }
+    },
+    "artifactName": "InsideMeeting-Server-${version}-${arch}.${ext}"
   }
 }
