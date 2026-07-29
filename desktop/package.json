@@ -29,7 +29,6 @@
     "appId": "com.inside.meeting",
     "productName": "InsideMeeting",
     "directories": { "output": "release" },
-    "//asar": "关掉 asar：服务端是被 fork 成独立进程跑的，普通文件路径最省事也最不容易出意外",
     "asar": false,
     "files": [
       "main.js",

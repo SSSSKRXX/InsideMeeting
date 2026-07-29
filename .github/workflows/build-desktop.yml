@@ -31,6 +31,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
 
+    # Windows 默认用 PowerShell，而 pwsh 会把 npm 写到 stderr 的警告当成错误，
+    # 导致明明装成功了步骤却是红的。全部统一用 bash，两个平台行为一致。
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,20 +44,33 @@ jobs:
         with:
           node-version: 20
 
+      - name: 环境自检
+        run: |
+          node -v && npm -v
+          echo "--- 仓库根目录 ---"
+          ls -la
+
       # 桌面 App 里内嵌了完整服务端，所以要先把前端构建出来
+      - name: 安装根依赖
+        run: npm install --no-audit --no-fund
+
       - name: 构建前端
         run: |
-          npm install
           npm run build
+          echo "--- web/dist ---"
+          ls -la web/dist
 
       - name: 安装依赖（桌面 App）
         working-directory: desktop
-        run: npm install
+        run: npm install --no-audit --no-fund
 
-      # prepare 脚本会把 server/src 和 web/dist 复制进 desktop/bundled
+      - name: 复制服务端与前端到 App 内
+        working-directory: desktop
+        run: npm run prepare-bundle
+
       - name: 打包桌面 App
         working-directory: desktop
-        run: npm run dist
+        run: npx electron-builder
         env:
           # 不做代码签名。要签名的话把证书配成 secrets，
           # 参考 https://www.electron.build/code-signing
