@@ -13,24 +13,49 @@ export default function Archive({ meetingId, onBack }) {
   const [tab, setTab] = useState('summary');
   const [err, setErr] = useState('');
 
-  const loadList = useCallback(() => {
-    fetch('/api/meetings')
-      .then((r) => r.json())
-      .then(setList)
-      .catch(() => {});
-  }, []);
+  // 会议记录可能需要口令。存在 sessionStorage 里，关掉浏览器就要重新输。
+  const [token, setToken] = useState(() => sessionStorage.getItem('im.archive') || '');
+  const [locked, setLocked] = useState(false);
+  const [pwInput, setPwInput] = useState('');
+  const [pwErr, setPwErr] = useState('');
 
-  const loadDetail = useCallback((id) => {
-    if (!id) return;
-    fetch(`/api/meetings/${id}`)
+  /** 所有会议记录相关请求都要带口令 */
+  const afetch = useCallback(
+    (url, opts = {}) =>
+      fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'x-archive-token': token } }).then((r) => {
+        if (r.status === 401) {
+          setLocked(true);
+          throw new Error('需要口令');
+        }
+        return r;
+      }),
+    [token]
+  );
+
+  const loadList = useCallback(() => {
+    afetch('/api/meetings')
       .then((r) => r.json())
       .then((d) => {
-        setDetail(d);
-        setJob(d.job);
-        setTab(d.summary ? 'summary' : d.transcript ? 'transcript' : 'files');
+        setList(d);
+        setLocked(false);
       })
-      .catch(() => setErr('加载失败'));
-  }, []);
+      .catch(() => {});
+  }, [afetch]);
+
+  const loadDetail = useCallback(
+    (id) => {
+      if (!id) return;
+      afetch(`/api/meetings/${id}`)
+        .then((r) => r.json())
+        .then((d) => {
+          setDetail(d);
+          setJob(d.job);
+          setTab(d.summary ? 'summary' : d.transcript ? 'transcript' : 'files');
+        })
+        .catch(() => {});
+    },
+    [afetch]
+  );
 
   useEffect(loadList, [loadList]);
   useEffect(() => loadDetail(current), [current, loadDetail]);
@@ -39,7 +64,7 @@ export default function Archive({ meetingId, onBack }) {
   useEffect(() => {
     if (!current || job?.state !== 'running') return;
     const t = setInterval(async () => {
-      const j = await fetch(`/api/meetings/${current}/job`).then((r) => r.json());
+      const j = await afetch(`/api/meetings/${current}/job`).then((r) => r.json());
       setJob(j);
       if (j.state === 'done' || j.state === 'error') {
         clearInterval(t);
@@ -48,11 +73,11 @@ export default function Archive({ meetingId, onBack }) {
       }
     }, 1500);
     return () => clearInterval(t);
-  }, [current, job?.state, loadDetail, loadList]);
+  }, [current, job?.state, loadDetail, loadList, afetch]);
 
   const process = async (body = {}) => {
     setErr('');
-    await fetch(`/api/meetings/${current}/process`, {
+    await afetch(`/api/meetings/${current}/process`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -61,7 +86,7 @@ export default function Archive({ meetingId, onBack }) {
   };
 
   const renameSpeaker = async (peerId, name) => {
-    await fetch(`/api/meetings/${current}`, {
+    await afetch(`/api/meetings/${current}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ participantNames: { [peerId]: name } }),
@@ -77,6 +102,47 @@ export default function Archive({ meetingId, onBack }) {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  if (locked) {
+    return (
+      <div className="boot gate">
+        <h3>会议记录需要口令</h3>
+        <p className="muted">历史录音和纪要涉及会议内容，管理员为它设置了访问口令。</p>
+        <form
+          style={{ display: 'flex', gap: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            setPwErr('');
+            fetch('/api/meetings', { headers: { 'x-archive-token': pwInput } }).then((r) => {
+              if (!r.ok) return setPwErr('口令不正确');
+              sessionStorage.setItem('im.archive', pwInput);
+              setToken(pwInput);
+              setLocked(false);
+            });
+          }}
+        >
+          <input
+            type="password"
+            value={pwInput}
+            onChange={(e) => setPwInput(e.target.value)}
+            placeholder="查看口令"
+            autoFocus
+            style={{
+              background: 'var(--panel-2)', border: '1px solid var(--line)', color: 'var(--text)',
+              padding: '9px 12px', borderRadius: 8,
+            }}
+          />
+          <button className="primary" type="submit">
+            查看
+          </button>
+        </form>
+        {pwErr && <div className="error">{pwErr}</div>}
+        <button className="ghost" onClick={onBack}>
+          返回
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="archive">
@@ -128,7 +194,7 @@ export default function Archive({ meetingId, onBack }) {
                     className="ghost"
                     disabled={job?.state === 'running'}
                     onClick={async () => {
-                      await fetch(`/api/meetings/${current}/resummarize`, { method: 'POST' });
+                      await afetch(`/api/meetings/${current}/resummarize`, { method: 'POST' });
                       setJob({ state: 'running', progress: 50, message: '重新生成纪要' });
                     }}
                   >
@@ -143,7 +209,7 @@ export default function Archive({ meetingId, onBack }) {
                     className="ghost"
                     onClick={async () => {
                       setErr('');
-                      const r = await fetch(`/api/meetings/${current}/notify`, {
+                      const r = await afetch(`/api/meetings/${current}/notify`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: '{}',
@@ -276,10 +342,10 @@ export default function Archive({ meetingId, onBack }) {
                       <span className="muted">
                         {new Date(f.startedAt).toLocaleTimeString('zh-CN', { hour12: false })} · {fmtSize(f.bytes)}
                       </span>
-                      <a className="ghost" href={f.url} target="_blank" rel="noreferrer">
+                      <a className="ghost" href={`${f.url}${token ? `?token=${encodeURIComponent(token)}` : ''}`} target="_blank" rel="noreferrer">
                         播放
                       </a>
-                      <a className="ghost" href={`${f.url}?download=1`}>
+                      <a className="ghost" href={`${f.url}?download=1${token ? `&token=${encodeURIComponent(token)}` : ''}`}>
                         下载
                       </a>
                       <button className="link" onClick={() => {

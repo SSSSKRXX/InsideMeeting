@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import SettingsPanel from './SettingsPanel.jsx';
 
 const fmtBytes = (b) => {
   if (b == null) return '—';
@@ -15,6 +16,158 @@ const fmtUptime = (s) => {
 };
 
 const clock = (t) => new Date(t).toLocaleString('zh-CN', { hour12: false });
+
+/**
+ * 存储位置设置。
+ *
+ * 浏览器没法弹出服务器的文件选择框，所以做法是：
+ * 服务端把常用位置和外接磁盘列出来，这里做成可点的候选；
+ * 也允许手敲绝对路径，敲完先校验可写再保存。
+ * 真正的原生选择框在菜单栏程序里（它跑在服务器那台机器上）。
+ */
+function PathSettings({ api, onSaved, flash }) {
+  const [data, setData] = useState(null);
+  const [rec, setRec] = useState('');
+  const [min, setMin] = useState('');
+  const [separate, setSeparate] = useState(false);
+  const [migrate, setMigrate] = useState(true);
+  const [checking, setChecking] = useState('');
+  const [check, setCheck] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api('paths');
+      setData(d);
+      setRec(d.recordings);
+      setMin(d.minutes || '');
+      setSeparate(d.separate);
+    } catch (e) {
+      flash(e.message);
+    }
+  }, [api, flash]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const validate = async (which, dir) => {
+    if (!dir) return;
+    setChecking(which);
+    try {
+      const r = await api('paths/validate', { method: 'POST', body: JSON.stringify({ dir }) });
+      setCheck((c) => ({ ...c, [which]: r }));
+    } catch (e) {
+      setCheck((c) => ({ ...c, [which]: { ok: false, error: e.message } }));
+    } finally {
+      setChecking('');
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = { recordings: rec, minutes: separate ? min : '', migrate };
+      const r = await api('paths', { method: 'POST', body: JSON.stringify(body) });
+      if (r.ok === false) return flash(r.error);
+      const parts = [];
+      if (r.migrated?.recordings) parts.push(`搬移了 ${r.migrated.recordings.moved} 场会议的录制文件`);
+      if (r.migrated?.minutes) parts.push(`搬移了 ${r.migrated.minutes.moved} 份纪要`);
+      flash(`存储位置已更新${parts.length ? '，' + parts.join('，') : ''}${r.warnings?.length ? '。' + r.warnings.join(' ') : ''}`);
+      await load();
+      onSaved?.();
+    } catch (e) {
+      flash(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!data) return <p className="hint">读取存储配置中…</p>;
+
+  const dirty = rec !== data.recordings || (separate ? min : '') !== (data.minutes || '');
+
+  return (
+    <div className="pathbox">
+      <h3 style={{ marginTop: 0 }}>存储位置</h3>
+      <p className="hint">
+        录制文件会持续变大（一场 2 小时 6 人的会几百 MB），纪要只有几十 KB。
+        把录制放外置盘、纪要留在系统盘跟着备份，是比较常见的分法。
+      </p>
+
+      <label className="path-label">录制文件保存到</label>
+      <div className="path-row">
+        <input value={rec} onChange={(e) => setRec(e.target.value)} placeholder="/Volumes/移动硬盘/InsideMeeting" />
+        <button className="ghost" disabled={checking === 'rec'} onClick={() => validate('rec', rec)}>
+          {checking === 'rec' ? '检查中' : '检查可写'}
+        </button>
+      </div>
+      {check.rec && (
+        <p className={check.rec.ok ? 'hint ok' : 'hint bad'}>
+          {check.rec.ok ? `可写${check.rec.freeBytes != null ? `，剩余 ${fmtBytes(check.rec.freeBytes)}` : ''}` : check.rec.error}
+        </p>
+      )}
+      <div className="path-sugs">
+        {data.suggestions.map((s) => (
+          <button key={s.dir} className="sug" onClick={() => setRec(s.dir)} title={s.dir}>
+            {s.label}
+            {s.freeBytes != null && <i>剩 {fmtBytes(s.freeBytes)}</i>}
+          </button>
+        ))}
+      </div>
+
+      <label className="switch-row" style={{ marginTop: 14 }}>
+        <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} />
+        <span>纪要单独存放<i>不勾选就跟录制文件放在一起</i></span>
+      </label>
+
+      {separate && (
+        <>
+          <label className="path-label">会议纪要保存到</label>
+          <div className="path-row">
+            <input value={min} onChange={(e) => setMin(e.target.value)} placeholder="/Users/你/Documents/会议纪要" />
+            <button className="ghost" disabled={checking === 'min'} onClick={() => validate('min', min)}>
+              {checking === 'min' ? '检查中' : '检查可写'}
+            </button>
+          </div>
+          {check.min && (
+            <p className={check.min.ok ? 'hint ok' : 'hint bad'}>
+              {check.min.ok ? `可写${check.min.freeBytes != null ? `，剩余 ${fmtBytes(check.min.freeBytes)}` : ''}` : check.min.error}
+            </p>
+          )}
+          <div className="path-sugs">
+            {data.suggestions.map((s) => (
+              <button key={s.dir} className="sug" onClick={() => setMin(s.dir)} title={s.dir}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <label className="switch-row" style={{ marginTop: 10 }}>
+        <input type="checkbox" checked={migrate} onChange={(e) => setMigrate(e.target.checked)} />
+        <span>同时搬移已有文件<i>不搬的话，历史会议在界面上会看不到</i></span>
+      </label>
+
+      <div className="arch-actions" style={{ marginTop: 12 }}>
+        <button className="primary" disabled={!dirty || saving} onClick={save}>
+          {saving ? '保存中…' : '保存并生效'}
+        </button>
+        {dirty && (
+          <button className="ghost" onClick={() => { setRec(data.recordings); setMin(data.minutes || ''); setSeparate(data.separate); setCheck({}); }}>
+            撤销修改
+          </button>
+        )}
+      </div>
+
+      <p className="hint">
+        改动立即生效，不用重启服务。当前实际使用：录制 <code>{data.recordings}</code>
+        ，纪要 <code>{data.minutesEffective}</code>
+      </p>
+    </div>
+  );
+}
 
 export default function Admin({ onBack }) {
   const [token, setToken] = useState(() => sessionStorage.getItem('im.admin') || '');
@@ -167,9 +320,9 @@ export default function Admin({ onBack }) {
       <nav className="tabs" style={{ flex: 'none' }}>
         {[
           ['status', '服务状态'],
+          ['settings', '设置'],
           ['rooms', '房间管理'],
-          ['storage', '磁盘与清理'],
-          ['config', '配置总览'],
+          ['storage', '存储与清理'],
           ['logs', '日志'],
         ].map(([k, label]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
@@ -182,8 +335,35 @@ export default function Admin({ onBack }) {
         {msg && <div className="warn" style={{ marginBottom: 12 }}>{msg}</div>}
         {!s && <p className="hint">加载中…</p>}
 
+        {tab === 'settings' && <SettingsPanel api={api} flash={flash} />}
+
         {s && tab === 'status' && (
           <>
+            {(!s.config.asr.key || !s.config.llm.key) && (
+              <div className="setup-banner">
+                <b>还没配置完</b>
+                <p>
+                  {!s.config.asr.key && !s.config.llm.key
+                    ? '转写服务和纪要模型都还没填，现在开会不会生成任何纪要。'
+                    : !s.config.asr.key
+                      ? '转写服务还没填，无法把录音转成文字。'
+                      : '纪要模型还没填，能出逐字稿但不会有纪要。'}
+                </p>
+                <button className="primary" onClick={() => setTab('settings')}>
+                  去填写
+                </button>
+              </div>
+            )}
+            {!s.config.adminToken && (
+              <div className="setup-banner warn-banner">
+                <b>管理口令未设置</b>
+                <p>现在任何能打开会议地址的人都能进入这个管理后台，改配置、删录制。</p>
+                <button className="primary" onClick={() => setTab('settings')}>
+                  去设置
+                </button>
+              </div>
+            )}
+
             <div className="stat-grid">
               <div className="stat">
                 <span>运行时长</span>
@@ -244,7 +424,11 @@ export default function Admin({ onBack }) {
                 <tr><td className="k">平台</td><td>{s.service.platform} · Node {s.service.node}</td></tr>
                 <tr><td className="k">负载</td><td>{s.service.loadavg.join(' / ')}</td></tr>
                 <tr><td className="k">ffmpeg</td><td>{s.service.ffmpeg ? '可用' : '未安装（无法生成纪要）'}</td></tr>
-                <tr><td className="k">数据目录</td><td><code>{s.storage.dataDir}</code></td></tr>
+                <tr><td className="k">端口 / HTTPS</td><td>{s.config.port} · {s.config.tls ? '已启用' : '未启用'}</td></tr>
+                <tr><td className="k">组网模式</td><td>{s.config.networkMode}</td></tr>
+                <tr><td className="k">录制位置</td><td><code>{s.storage.recordings}</code></td></tr>
+                <tr><td className="k">纪要位置</td><td><code>{s.storage.minutesEffective}</code></td></tr>
+                <tr><td className="k">会议记录访问</td><td>{s.config.archivePassword ? '需要口令' : <b style={{ color: '#fcd34d' }}>无口令，任何人都能查看全部历史</b>}</td></tr>
               </tbody>
             </table>
           </>
@@ -304,6 +488,8 @@ export default function Admin({ onBack }) {
 
         {tab === 'storage' && (
           <>
+            <PathSettings api={api} onSaved={() => { refresh(); api('storage').then(setStorage).catch(() => {}); }} flash={flash} />
+
             <div className="stat-grid">
               <div className="stat">
                 <span>录制总占用</span>
@@ -369,30 +555,6 @@ export default function Admin({ onBack }) {
                 </tbody>
               </table>
             )}
-          </>
-        )}
-
-        {s && tab === 'config' && (
-          <>
-            <p className="hint">
-              这里只读。改配置要编辑服务器上的 <code>.env</code> 然后重启服务。密钥已脱敏。
-            </p>
-            <table>
-              <tbody>
-                <tr><td className="k">端口 / HTTPS</td><td>{s.config.port} · {s.config.tls ? '已启用' : '未启用'}</td></tr>
-                <tr><td className="k">组网模式</td><td>{s.config.networkMode}</td></tr>
-                <tr><td className="k">录制切分</td><td>每 {s.config.segmentMinutes} 分钟</td></tr>
-                <tr><td className="k">全局入会口令</td><td>{s.config.joinPassword ? '已设置' : <b style={{ color: '#fcd34d' }}>未设置</b>}</td></tr>
-                <tr><td className="k">管理口令</td><td>{s.config.adminToken ? '已设置' : <b style={{ color: '#fcd34d' }}>未设置</b>}</td></tr>
-                <tr><td className="k">实时纪要</td><td>{s.config.live.enabled ? `开启，每 ${s.config.live.chunkSeconds} 秒转写 / 每 ${s.config.live.summarySeconds} 秒刷新摘要` : '关闭'}</td></tr>
-                <tr><td className="k">转写服务</td><td>{s.config.asr.model} @ {s.config.asr.baseUrl}<br /><span className="muted">密钥 {s.config.asr.key || '未配置'} · 语言 {s.config.asr.language}</span></td></tr>
-                <tr><td className="k">纪要模型</td><td>{s.config.llm.model} @ {s.config.llm.baseUrl}<br /><span className="muted">密钥 {s.config.llm.key || '未配置'}</span></td></tr>
-                <tr><td className="k">纪要推送</td><td>
-                  {['wecom', 'feishu', 'email'].filter((k) => s.config.notify[k]).map((k) => ({ wecom: '企业微信', feishu: '飞书', email: '邮件' })[k]).join('、') || '未配置'}
-                </td></tr>
-                <tr><td className="k">对外地址</td><td>{s.config.publicBaseUrl || <span className="muted">未配置（推送消息里不会有跳转按钮）</span>}</td></tr>
-              </tbody>
-            </table>
           </>
         )}
 
