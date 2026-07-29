@@ -31,7 +31,22 @@ npm run dist:win    # 产出 exe 安装包
 
 产物在 `desktop/release/`。
 
-**只能在对应平台上打包对应平台的产物**——Mac 上打不出 Windows 的 exe（严格说 electron-builder 配合 wine 可以，但很折腾，不如直接找台 Windows 机器跑一次）。
+**只能在对应平台上打包对应平台的产物**——Mac 上打不出 Windows 的 exe（严格说 electron-builder 配合 wine 可以，但很折腾）。三个办法：
+
+| 办法 | 怎么做 |
+|---|---|
+| **GitHub Actions（推荐）** | 推一个 `v` 开头的 tag，云上两个平台一起打，产物自动传到 Releases。你不需要有 Windows 电脑 |
+| Windows 本机打 | 在 Windows 上双击项目根目录的 `打包桌面程序.bat` |
+| Mac 本机打 | 双击 `打包桌面程序.command`，只能出 dmg |
+
+GitHub Actions 的用法：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+然后去仓库的 Actions 页面看进度，打完在 Releases 里下载。也可以在 Actions 页面手动点 `Run workflow` 触发，不打 tag 只出构建产物。
 
 打出来的包没有代码签名，用户首次打开会被系统拦：
 
