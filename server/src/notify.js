@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
-import { meetingDir, readMeeting } from './store.js';
+import { meetingDir, minutesDir, resolveArtifact, readMeeting } from './store.js';
 
 /**
  * 纪要自动推送。
@@ -22,8 +22,8 @@ export function buildPayload(meetingId) {
   const dir = meetingDir(meetingId);
 
   const read = (f) => {
-    const p = path.join(dir, f || '');
-    return f && fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    const p = resolveArtifact(meetingId, f);
+    return p ? fs.readFileSync(p, 'utf8') : '';
   };
 
   const summary = read(m.artifacts?.summary);
@@ -47,7 +47,7 @@ export function buildPayload(meetingId) {
     actions,
     stats: m.stats || [],
     link: config.notify.baseUrl ? `${config.notify.baseUrl.replace(/\/$/, '')}/#/archive/${meetingId}` : '',
-    dir,
+    dir: minutesDir(meetingId),
     artifacts: m.artifacts || {},
   };
 }
