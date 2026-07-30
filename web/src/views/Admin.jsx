@@ -169,6 +169,98 @@ function PathSettings({ api, onSaved, flash }) {
   );
 }
 
+/**
+ * 虚拟背景模型的下载。
+ *
+ * 之前只让浏览器去拉模型，失败就提示用户跑命令行脚本 —— 对
+ * 「装个 App 就想用」的人等于没有。改成服务端下一次、所有参会者
+ * 从局域网取：又快，又不依赖每个人的网络。
+ */
+function ModelPanel({ api, flash }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSt(await api('models'));
+    } catch { /* 没配管理口令时也可能读不到，静默 */ }
+  }, [api]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // 下载中每 2 秒刷一次进度
+  useEffect(() => {
+    if (st?.job?.state !== 'running') return;
+    const t = setInterval(load, 2000);
+    return () => clearInterval(t);
+  }, [st?.job?.state, load]);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      await api('models/download', { method: 'POST', body: '{}' });
+      flash('开始下载模型，会依次尝试多个镜像');
+      setTimeout(load, 800);
+    } catch (e) {
+      flash(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!st) return null;
+  const job = st.job;
+
+  return (
+    <section className="set-group">
+      <h3>虚拟背景模型</h3>
+      <p className="hint">
+        背景模糊和换背景需要一个约 250KB 的人像分割模型。
+        <b>服务器下载一次，所有参会者从局域网取</b>，不用每个人各自去外网拉。
+      </p>
+
+      <div className="switch-row" style={{ marginTop: 10 }}>
+        <span>
+          当前状态
+          <i>
+            {st.ready ? '已就绪，虚拟背景可用' : '未下载，虚拟背景会提示加载失败'}
+            {' · '}存放在 {st.dir}
+          </i>
+        </span>
+        <button className={st.ready ? 'ghost' : 'primary'} disabled={busy || job?.state === 'running'} onClick={download}>
+          {job?.state === 'running' ? '下载中…' : st.ready ? '重新下载' : '下载模型'}
+        </button>
+      </div>
+
+      {job && job.state !== 'idle' && (
+        <>
+          {job.state === 'error' && (
+            <div className="error" style={{ marginTop: 10 }}>
+              {job.error}
+              <div style={{ marginTop: 6, fontWeight: 'normal' }}>
+                服务器连不上外网的话，可以在能上网的机器下载后手动放进去：
+                把 <code>selfie_segmenter.tflite</code> 放到 <code>{st.dir}</code>。
+              </div>
+            </div>
+          )}
+          {job.log?.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary className="hint" style={{ cursor: 'pointer' }}>
+                下载日志（{job.done}/{job.total}）
+              </summary>
+              <pre className="logbox" style={{ maxHeight: 200, marginTop: 6 }}>
+                {job.log.join('\n')}
+              </pre>
+            </details>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function Admin({ onBack }) {
   const [token, setToken] = useState(() => sessionStorage.getItem('im.admin') || '');
   const [authed, setAuthed] = useState(false);
@@ -335,7 +427,12 @@ export default function Admin({ onBack }) {
         {msg && <div className="warn" style={{ marginBottom: 12 }}>{msg}</div>}
         {!s && <p className="hint">加载中…</p>}
 
-        {tab === 'settings' && <SettingsPanel api={api} flash={flash} />}
+        {tab === 'settings' && (
+          <>
+            <ModelPanel api={api} flash={flash} />
+            <SettingsPanel api={api} flash={flash} />
+          </>
+        )}
 
         {s && tab === 'status' && (
           <>

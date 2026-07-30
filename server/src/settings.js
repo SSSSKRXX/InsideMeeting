@@ -96,6 +96,53 @@ export const SCHEMA = [
     help: '距上次摘要新增字数不到这个值就跳过，避免没人说话时白烧额度。',
   },
 
+  // ---------- 画质 ----------
+  {
+    key: 'mediaPreset', path: 'media.preset', env: 'MEDIA_PRESET', group: 'media', type: 'select',
+    label: '画质档位',
+    options: [
+      ['auto', '自动（推荐）'],
+      ['high', '高清 —— 千兆内网'],
+      ['balanced', '均衡'],
+      ['smooth', '流畅优先 —— 网络差时用'],
+      ['custom', '自定义'],
+    ],
+    help: '自动：上限给足，带宽不够时 WebRTC 会自己往下调。只有明确知道要压多少时才选自定义。',
+  },
+  {
+    key: 'screenBitrate', path: 'media.screenBitrate', env: 'SCREEN_BITRATE', group: 'media', type: 'number',
+    label: '屏幕共享码率（bps）', min: 500_000, max: 50_000_000,
+    help: '仅「自定义」档位生效。8000000 = 8Mbps，够 1080p 清晰文字。',
+  },
+  {
+    key: 'screenFps', path: 'media.screenFps', env: 'SCREEN_FPS', group: 'media', type: 'number',
+    label: '屏幕共享帧率', min: 1, max: 60,
+    help: '演示文档 10-15 就够。要演示视频或动画才需要 24 以上，但会明显吃带宽。',
+  },
+  {
+    key: 'screenMaxHeight', path: 'media.screenMaxHeight', env: 'SCREEN_MAX_HEIGHT', group: 'media', type: 'number',
+    label: '屏幕共享分辨率上限（高度）', min: 0, max: 2160,
+    help: '0 表示不限制，用屏幕原生分辨率——文字最清晰。填 1080 会缩放到 1080p。',
+  },
+  {
+    key: 'camBitrate', path: 'media.camBitrate', env: 'CAM_BITRATE', group: 'media', type: 'number',
+    label: '摄像头码率（bps）', min: 200_000, max: 20_000_000,
+  },
+  {
+    key: 'camFps', path: 'media.camFps', env: 'CAM_FPS', group: 'media', type: 'number',
+    label: '摄像头帧率', min: 10, max: 60,
+  },
+  {
+    key: 'camHeight', path: 'media.camHeight', env: 'CAM_HEIGHT', group: 'media', type: 'number',
+    label: '摄像头分辨率（高度）', min: 240, max: 2160,
+    help: '720 = 720p，1080 = 1080p。人多时建议 720，每多一个人你的上行就多一路。',
+  },
+  {
+    key: 'recordScreenBitrate', path: 'media.recordScreenBitrate', env: 'RECORD_SCREEN_BITRATE', group: 'media', type: 'number',
+    label: '屏幕录制码率（bps）', min: 500_000, max: 50_000_000,
+    help: '录到文件的码率，和实时传输分开。录制不受网络限制，可以给高一些换清晰度，代价是文件更大。',
+  },
+
   // ---------- 录制 ----------
   {
     key: 'segmentMinutes', path: 'recording.segmentMinutes', env: 'SEGMENT_MINUTES', group: 'recording', type: 'number',
@@ -161,6 +208,7 @@ export const SCHEMA = [
 export const GROUPS = [
   { id: 'ai', label: 'AI 服务', desc: '会议纪要靠这两个服务生成。不配的话会议照常开，只是没有纪要。' },
   { id: 'security', label: '安全', desc: '控制谁能进会、谁能看历史记录、谁能打开这个页面。' },
+  { id: 'media', label: '画质', desc: '屏幕共享糊、卡顿都在这里调。改完参会者要刷新页面才生效。' },
   { id: 'live', label: '会中实时纪要', desc: '边开会边出摘要。开着会持续消耗转写额度。' },
   { id: 'recording', label: '录制', desc: '一般不用改。' },
   { id: 'notify', label: '纪要推送', desc: '会后自动把纪要发到群里或邮箱。配了哪个发哪个。' },

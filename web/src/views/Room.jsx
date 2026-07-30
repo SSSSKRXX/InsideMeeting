@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Mesh, createLevelMeter } from '../lib/mesh.js';
+import { Mesh, createLevelMeter, configureEncoding } from '../lib/mesh.js';
 import { TrackRecorder, LiveChunker, createLiveCaption, screenShareSupported } from '../lib/recorder.js';
 import { renderMarkdown } from '../lib/md.js';
 import { MicProcessor } from '../lib/audio.js';
@@ -67,6 +67,8 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
   const [liveSummary, setLiveSummary] = useState({ text: '', at: 0 });
   const [liveLines, setLiveLines] = useState([]);
   const [liveErr, setLiveErr] = useState('');
+  const [liveStats, setLiveStats] = useState(null);
+  const [liveSent, setLiveSent] = useState(0);
 
   const [chat, setChat] = useState([]);
   const [captions, setCaptions] = useState([]);
@@ -158,6 +160,14 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
   }, []);
 
   // ---------- 建立连接 ----------
+  // 服务端下发的画质配置，用于摄像头约束、屏幕共享约束、编码码率
+  const media = serverConfig.media || {};
+
+  useEffect(() => {
+    configureEncoding(serverConfig.media);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     const socket = io({ transports: ['websocket', 'polling'] });
@@ -176,9 +186,8 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
           video: prefs.camOn
             ? {
                 deviceId: prefs.camId ? { exact: prefs.camId } : undefined,
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                frameRate: { ideal: 24 },
+                height: { ideal: media.camHeight || 720 },
+                frameRate: { ideal: media.camFps || 30 },
                 facingMode: 'user',
               }
             : false,
@@ -293,8 +302,10 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
         return next.slice(-60);
       });
     });
-    socket.on('live-transcript', ({ added }) => {
+    socket.on('live-transcript', ({ added, stats }) => {
       setLiveLines((l) => [...l, ...added].slice(-300));
+      if (stats) setLiveStats(stats);
+      setLiveErr('');
     });
     socket.on('live-summary', ({ summary, at }) => {
       setLiveSummary({ text: summary, at });
@@ -407,12 +418,21 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
     }
     if (!canShare) return flash('当前设备不支持屏幕共享（手机浏览器普遍不支持）');
     try {
+      // 分辨率上限为 0 时不加约束，让浏览器按屏幕原生尺寸给 ——
+      // 强行指定会先缩放再编码，文字边缘会糊
+      const videoConstraints = { frameRate: { ideal: media.screenFps || 15 } };
+      if (media.screenMaxHeight) videoConstraints.height = { max: media.screenMaxHeight };
+
       const s = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 15, width: 1920, height: 1080 },
+        video: videoConstraints,
         audio: true,
       });
       screenStreamRef.current = s;
       const track = s.getVideoTracks()[0];
+      // 告诉编码器这是「细节优先」的内容，别为了帧率牺牲清晰度
+      try {
+        track.contentHint = 'detail';
+      } catch { /* 老浏览器没有 */ }
       track.onended = () => toggleShare();
       meshRef.current?.setLocalTrack('screen', track);
       setLocalScreen(new MediaStream([track]));
@@ -450,10 +470,32 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
       name,
       stream: micStream(),
       chunkSeconds: serverConfig.live?.chunkSeconds || 15,
+      onEvent: (e) => {
+        // 上传计数放在客户端。和服务端的接收数一对比，
+        // 就能立刻分清是「没传出去」还是「传了但没转写出来」
+        if (e.type === 'sent') setLiveSent((n) => n + 1);
+        if (e.type === 'send-failed') setLiveErr('音频片段上传失败，检查与服务器的连接');
+      },
     });
     liveRef.current = chunker;
     chunker.start();
     setLiveOn(true);
+  };
+
+  /** 拉一次服务端的实时纪要状态，用于诊断 */
+  const refreshLiveState = async () => {
+    if (!meetingIdRef.current) return;
+    try {
+      const s = await fetch(`/api/live/${meetingIdRef.current}`).then((r) => r.json());
+      setLiveStats(s.stats);
+      if (s.summary) setLiveSummary({ text: s.summary, at: s.summaryAt });
+      flash(
+        `服务端收到 ${s.stats.received} 片 · 判为静音 ${s.stats.silent} · 转写成功 ${s.stats.transcribed} · 失败 ${s.stats.failed}`
+      );
+      if (s.stats.lastError) setLiveErr(s.stats.lastError);
+    } catch (e) {
+      flash(`读取状态失败：${e.message}`);
+    }
   };
 
   const toggleLive = () => {
@@ -487,6 +529,8 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
       stream,
       segmentMinutes: serverConfig.settings?.segmentMinutes || 60,
       chunkSeconds: serverConfig.settings?.chunkSeconds || 5,
+      // 录制到文件的码率和实时传输分开 —— 录制不受网络限制，可以给高
+      videoBitrate: media.recordScreenBitrate || 6_000_000,
     });
     recordersRef.current.screen = rec;
     rec.start();
@@ -841,7 +885,30 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
             </button>
           </div>
 
-          {!liveAvailable && <p className="hint">服务端未配置转写服务，实时纪要不可用。</p>}
+          {!liveAvailable && (
+            <p className="hint">
+              服务端未配置转写服务，实时纪要不可用。如果你刚在管理后台填过密钥，
+              <b>刷新一下这个页面</b>——配置是页面加载时读取的。
+            </p>
+          )}
+
+          {liveOn && (
+            <div className="live-diag">
+              <span>已上传 {liveSent} 片</span>
+              {liveStats && (
+                <>
+                  <span>服务端收到 {liveStats.received}</span>
+                  <span>静音跳过 {liveStats.silent}</span>
+                  <span>转写成功 {liveStats.transcribed}</span>
+                  {liveStats.failed > 0 && <span className="bad">失败 {liveStats.failed}</span>}
+                </>
+              )}
+              <button className="link" onClick={refreshLiveState}>
+                刷新状态
+              </button>
+            </div>
+          )}
+
           {liveErr && <div className="error">{liveErr}</div>}
 
           {liveSummary.text ? (
@@ -1032,7 +1099,12 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
         )}
         <div className="spacer" />
         {meetingId && !isMobile && (
-          <button className="ghost" onClick={() => onArchive(meetingId)}>
+          <button
+            className="ghost"
+            // 开新标签页，不要在当前页跳转 —— 跳转会卸载会议组件，
+            // 触发清理逻辑，人就被踢出会议了
+            onClick={() => window.open(`${window.location.pathname}#/archive/${meetingId}`, '_blank')}
+          >
             会议记录
           </button>
         )}

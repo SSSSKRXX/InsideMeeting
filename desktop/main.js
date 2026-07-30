@@ -216,6 +216,31 @@ function openLogWindow() {
 
 // ---------------- 屏幕共享 ----------------
 
+/**
+ * 让渲染进程弹出选源界面并等结果。
+ *
+ * 不能用 executeJavaScript 去调 preload 里挂在 window 上的函数 ——
+ * 开了 contextIsolation 之后 preload 的 window 是隔离世界，
+ * 而 executeJavaScript 跑在主世界，看不到那个函数，只会抛异常。
+ * 走 IPC 就绕开了整个隔离世界的问题。
+ */
+function askRendererToPick(sources) {
+  return new Promise((resolve) => {
+    const id = `pick-${Date.now()}`;
+    const timer = setTimeout(() => {
+      ipcMain.removeAllListeners(id);
+      resolve(null);
+    }, 120000); // 用户可能盯着选源界面发呆，给足两分钟
+
+    ipcMain.once(id, (e, picked) => {
+      clearTimeout(timer);
+      resolve(picked);
+    });
+
+    win.webContents.send('pick-share-source', { replyChannel: id, sources });
+  });
+}
+
 function setupDisplayMedia() {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (request, callback) => {
@@ -224,18 +249,33 @@ function setupDisplayMedia() {
           types: ['screen', 'window'],
           thumbnailSize: { width: 320, height: 200 },
         });
-        if (!sources.length) return callback({});
 
-        const picked = await win.webContents.executeJavaScript(
-          `window.__pickShareSource(${JSON.stringify(
-            sources.map((s) => ({
-              id: s.id,
-              name: s.name,
-              thumbnail: s.thumbnail.toDataURL(),
-              isScreen: s.id.startsWith('screen'),
-            }))
-          )})`,
-          true
+        if (!sources.length) {
+          // macOS 上没给「屏幕录制」权限时，getSources 会返回空数组
+          if (process.platform === 'darwin') {
+            dialog.showMessageBox(win, {
+              type: 'warning',
+              message: '需要屏幕录制权限',
+              detail:
+                '系统设置 → 隐私与安全性 → 屏幕录制，勾选 InsideMeeting，然后完全退出 App 再重新打开。\n\n' +
+                '（macOS 要求重启 App 后权限才生效。）',
+              buttons: ['知道了', '打开系统设置'],
+            }).then(({ response }) => {
+              if (response === 1) {
+                shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+              }
+            });
+          }
+          return callback({});
+        }
+
+        const picked = await askRendererToPick(
+          sources.map((s) => ({
+            id: s.id,
+            name: s.name,
+            thumbnail: s.thumbnail.toDataURL(),
+            isScreen: s.id.startsWith('screen'),
+          }))
         );
         if (!picked) return callback({});
 

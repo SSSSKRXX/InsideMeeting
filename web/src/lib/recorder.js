@@ -45,8 +45,8 @@ export class TrackRecorder {
    * @param {string} o.kind  mic | screen | cam
    * @param {MediaStream} o.stream
    */
-  constructor({ meetingId, roomId, peerId, name, kind, stream, segmentMinutes = 60, chunkSeconds = 5, onEvent }) {
-    Object.assign(this, { meetingId, roomId, peerId, name, kind, stream, segmentMinutes, chunkSeconds });
+  constructor({ meetingId, roomId, peerId, name, kind, stream, segmentMinutes = 60, chunkSeconds = 5, videoBitrate = 1_500_000, onEvent }) {
+    Object.assign(this, { meetingId, roomId, peerId, name, kind, stream, segmentMinutes, chunkSeconds, videoBitrate });
     this.onEvent = onEvent || (() => {});
     this.seg = 0;
     this.recorder = null;
@@ -87,7 +87,7 @@ export class TrackRecorder {
     const isVideo = this.stream.getVideoTracks().length > 0;
     const mimeType = pickMime(isVideo ? 'video' : 'audio');
     const opts = { mimeType };
-    if (isVideo) opts.videoBitsPerSecond = 1_500_000;
+    if (isVideo) opts.videoBitsPerSecond = this.videoBitrate;
     opts.audioBitsPerSecond = 64_000;
 
     this.ext = containerExt(mimeType);

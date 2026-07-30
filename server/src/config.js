@@ -49,6 +49,22 @@ export const config = {
   //   public    —— 走公网，需要 STUN，跨 NAT 还需要 TURN
   networkMode: (process.env.NETWORK_MODE || 'tailscale').toLowerCase(),
 
+  // 画质。默认给得比较激进 —— 现在家宽普遍百兆千兆，
+  // 保守的默认值只会让屏幕共享白白糊掉。带宽不够时 WebRTC
+  // 自己会往下调，所以上限设高是安全的。
+  media: {
+    // auto / high / balanced / smooth / custom
+    preset: (process.env.MEDIA_PRESET || 'auto').toLowerCase(),
+    screenBitrate: num(process.env.SCREEN_BITRATE, 8_000_000),
+    screenFps: num(process.env.SCREEN_FPS, 15),
+    screenMaxHeight: num(process.env.SCREEN_MAX_HEIGHT, 0), // 0 = 不限制，用屏幕原生分辨率
+    camBitrate: num(process.env.CAM_BITRATE, 2_500_000),
+    camFps: num(process.env.CAM_FPS, 30),
+    camHeight: num(process.env.CAM_HEIGHT, 720),
+    // 录制到文件的码率，和实时传输分开设 —— 录制不受网络限制，可以给高
+    recordScreenBitrate: num(process.env.RECORD_SCREEN_BITRATE, 6_000_000),
+  },
+
   // 会中实时纪要
   live: {
     enabled: bool(process.env.LIVE_ENABLED, true),
@@ -113,7 +129,38 @@ export const paths = {
   recordings: path.join(config.dataDir, 'recordings'),
   meetings: path.join(config.dataDir, 'meetings'),
   tmp: path.join(config.dataDir, 'tmp'),
+  // 虚拟背景的模型放数据目录，而不是打包进 App —— 这样运行时能下载、
+  // 升级 App 不用重下，打包后的只读目录也不受影响
+  models: path.join(config.dataDir, 'models'),
 };
+
+/** 画质档位。custom 时用上面那些具体数值。 */
+export const MEDIA_PRESETS = {
+  smooth: { screenBitrate: 2_000_000, screenFps: 10, screenMaxHeight: 1080, camBitrate: 800_000, camFps: 24, camHeight: 480 },
+  balanced: { screenBitrate: 4_000_000, screenFps: 12, screenMaxHeight: 1440, camBitrate: 1_500_000, camFps: 30, camHeight: 720 },
+  high: { screenBitrate: 12_000_000, screenFps: 24, screenMaxHeight: 0, camBitrate: 4_000_000, camFps: 30, camHeight: 1080 },
+  // auto：上限给足，剩下交给 WebRTC 的拥塞控制自己压
+  auto: { screenBitrate: 8_000_000, screenFps: 15, screenMaxHeight: 0, camBitrate: 2_500_000, camFps: 30, camHeight: 720 },
+};
+
+/** 把档位展开成具体参数 */
+export function mediaSettings() {
+  const m = config.media;
+  if (m.preset === 'custom') {
+    return {
+      preset: 'custom',
+      screenBitrate: m.screenBitrate,
+      screenFps: m.screenFps,
+      screenMaxHeight: m.screenMaxHeight,
+      camBitrate: m.camBitrate,
+      camFps: m.camFps,
+      camHeight: m.camHeight,
+      recordScreenBitrate: m.recordScreenBitrate,
+    };
+  }
+  const p = MEDIA_PRESETS[m.preset] || MEDIA_PRESETS.auto;
+  return { preset: m.preset, ...p, recordScreenBitrate: m.recordScreenBitrate };
+}
 
 for (const p of Object.values(paths)) fs.mkdirSync(p, { recursive: true });
 

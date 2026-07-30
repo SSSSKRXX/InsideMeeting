@@ -21,12 +21,20 @@ contextBridge.exposeInMainWorld('insideMeeting', {
 /**
  * 屏幕共享的选源界面。
  *
- * Electron 里 getDisplayMedia 不会自己弹系统选择框，
- * 主进程会回调到这个函数，由我们自己画一个选择器。
- * 直接注入 DOM 而不是用 React，是为了让它独立于页面自身的状态，
- * 页面刷新或路由切换都不影响。
+ * Electron 里 getDisplayMedia 不会自己弹系统选择框，得我们自己画一个。
+ * 主进程通过 IPC 把候选源发过来，选完再把结果发回去。
+ *
+ * 为什么不让主进程用 executeJavaScript 直接调这里的函数：
+ * 开了 contextIsolation 之后 preload 的 window 是隔离世界，
+ * executeJavaScript 跑在主世界，两边看不见对方。DOM 倒是共享的，
+ * 所以这个函数在隔离世界里跑、往共享 DOM 上画界面，完全没问题。
  */
-window.__pickShareSource = (sources) =>
+ipcRenderer.on('pick-share-source', async (_e, { replyChannel, sources }) => {
+  const picked = await pickShareSource(sources);
+  ipcRenderer.send(replyChannel, picked);
+});
+
+const pickShareSource = (sources) =>
   new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.style.cssText = `

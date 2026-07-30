@@ -230,6 +230,12 @@ button.link { background: none; border: 0; color: var(--accent); padding: 0; fon
 .live-summary .doc ul { padding-left: 18px; margin: 2px 0; }
 .live-summary .doc li { font-size: 13px; margin: 3px 0; }
 .live-summary .doc p { font-size: 13px; }
+.live-diag {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center;
+  font-size: 11px; color: var(--muted);
+  background: var(--panel-2); border-radius: 6px; padding: 6px 9px;
+}
+.live-diag .bad { color: #fca5a5; }
 .live-raw summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 6px 0; }
 .live-raw .cap { font-size: 12px; line-height: 1.6; }
 .panel hr { border: 0; border-top: 1px solid var(--line); width: 100%; margin: 4px 0; }

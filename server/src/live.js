@@ -39,6 +39,9 @@ function getSession(meetingId, roomId) {
       summarizing: false,
       timer: null,
       queue: Promise.resolve(),
+      // 计数器。之前这条链路上的错误全被静默吞掉，
+      // 「配好了但没反应」时完全无从查起。
+      stats: { received: 0, silent: 0, transcribed: 0, failed: 0, lastError: '' },
     };
     sessions.set(meetingId, s);
     s.timer = setInterval(() => maybeSummarize(meetingId), config.live.summarySeconds * 1000);
@@ -49,11 +52,24 @@ function getSession(meetingId, roomId) {
 
 export function liveState(meetingId) {
   const s = sessions.get(meetingId);
-  if (!s) return { utterances: [], summary: '', summaryAt: 0 };
+  const base = {
+    enabled: config.live.enabled,
+    hasAsrKey: Boolean(config.asr.apiKey),
+    hasLlmKey: Boolean(config.llm.apiKey),
+    summarySeconds: config.live.summarySeconds,
+    minChars: config.live.minCharsForSummary,
+  };
+  if (!s) {
+    return { ...base, utterances: [], summary: '', summaryAt: 0, stats: { received: 0, silent: 0, transcribed: 0, failed: 0, lastError: '' } };
+  }
   return {
+    ...base,
     utterances: s.utterances.slice(-120),
     summary: s.summary,
     summaryAt: s.summaryAt,
+    stats: s.stats,
+    totalChars: s.utterances.reduce((a, u) => a + u.text.length, 0),
+    charsAtLastSummary: Math.max(0, s.charsAtLastSummary),
   };
 }
 
@@ -84,9 +100,20 @@ export async function ingestLiveChunk(meta, buffer) {
   if (!meetingId || !peerId) return { skipped: 'bad-meta' };
 
   const s = getSession(meetingId, meta.roomId);
+  s.stats.received++;
+
   // 串行处理同一场会议的小片，避免瞬间打爆 ASR 配额
-  s.queue = s.queue.then(() => handleChunk(s, { ...meta, meetingId, peerId }, buffer)).catch(() => {});
-  return { queued: true };
+  s.queue = s.queue
+    .then(() => handleChunk(s, { ...meta, meetingId, peerId }, buffer))
+    .catch((e) => {
+      // 不要再静默吞错误：既写日志，也推给会中界面
+      s.stats.failed++;
+      s.stats.lastError = String(e?.message || e).slice(0, 300);
+      console.error(`[实时纪要] ${meetingId} 处理片段失败:`, s.stats.lastError);
+      ioRef?.to(s.roomId).emit('live-error', { meetingId, error: s.stats.lastError });
+    });
+
+  return { queued: true, stats: s.stats };
 }
 
 async function handleChunk(session, meta, buffer) {
@@ -101,7 +128,10 @@ async function handleChunk(session, meta, buffer) {
     // 这一步是实时链路成本可控的关键。
     const regions = await detectSpeechRegions(raw, { minSilence: 0.5, pad: 0.2, mergeGap: 2, minLen: 0.4 });
     const speechLen = regions.reduce((a, r) => a + (r.end - r.start), 0);
-    if (speechLen < 0.5) return;
+    if (speechLen < 0.5) {
+      session.stats.silent++;
+      return;
+    }
 
     const from = regions[0].start;
     const to = regions[regions.length - 1].end;
@@ -119,14 +149,20 @@ async function handleChunk(session, meta, buffer) {
         text: x.text,
       }));
 
-    if (!fresh.length) return;
+    if (!fresh.length) {
+      // 转写通了但内容被幻听过滤器全滤掉了，也要记一笔
+      session.stats.silent++;
+      return;
+    }
 
+    session.stats.transcribed++;
     session.utterances.push(...fresh);
     session.utterances.sort((a, b) => a.absStart - b.absStart);
     if (session.utterances.length > 2000) session.utterances.splice(0, session.utterances.length - 2000);
 
     ioRef?.to(session.roomId).emit('live-transcript', {
       meetingId: session.meetingId,
+      stats: session.stats,
       added: fresh.map((u) => ({
         speaker: u.speaker,
         peerId: u.peerId,

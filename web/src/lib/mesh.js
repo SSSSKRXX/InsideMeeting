@@ -11,6 +11,56 @@
 
 const SLOT = { mic: 0, cam: 1, screen: 2 };
 
+/**
+ * 每种轨的编码策略。屏幕和摄像头的取舍是反的：
+ *
+ * 屏幕共享的内容是文字和界面，糊了就没法看，但画面基本不动。
+ * 所以要 contentHint='detail' + maintain-resolution：宁可掉帧也要保清晰。
+ * 浏览器默认按「视频」处理，会反过来牺牲清晰度保帧率，
+ * 这就是不设置时屏幕共享看起来很糊的原因。
+ *
+ * 摄像头相反，人脸糊一点无所谓，卡顿很难受，所以保帧率。
+ */
+const ENCODING = {
+  screen: {
+    contentHint: 'detail',
+    maxBitrate: 8_000_000,
+    degradationPreference: 'maintain-resolution',
+  },
+  cam: {
+    contentHint: 'motion',
+    maxBitrate: 2_500_000,
+    degradationPreference: 'maintain-framerate',
+  },
+  mic: null,
+};
+
+/** 用服务端下发的画质配置覆盖默认码率 */
+export function configureEncoding(media) {
+  if (!media) return;
+  if (media.screenBitrate) ENCODING.screen.maxBitrate = media.screenBitrate;
+  if (media.camBitrate) ENCODING.cam.maxBitrate = media.camBitrate;
+}
+
+/** 编码参数要在 replaceTrack 之后设，否则 sender 上还没有 encodings */
+async function applyEncoding(sender, kind, track) {
+  const cfg = ENCODING[kind];
+  if (!cfg || !sender || !track) return;
+
+  // contentHint 是轨上的属性，直接影响浏览器选什么编码策略
+  try {
+    if ('contentHint' in track) track.contentHint = cfg.contentHint;
+  } catch { /* 老浏览器没有这个属性 */ }
+
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = cfg.maxBitrate;
+    params.degradationPreference = cfg.degradationPreference;
+    await sender.setParameters(params);
+  } catch { /* 某些浏览器不支持改这些，保持默认即可 */ }
+}
+
 export class Mesh {
   constructor({ socket, iceServers, onUpdate }) {
     this.socket = socket;
@@ -27,7 +77,11 @@ export class Mesh {
     this.local[kind] = track || null;
     for (const p of this.peers.values()) {
       const sender = p.senders[kind];
-      if (sender) sender.replaceTrack(track || null).catch(() => {});
+      if (!sender) continue;
+      sender
+        .replaceTrack(track || null)
+        .then(() => applyEncoding(sender, kind, track))
+        .catch(() => {});
     }
   }
 
@@ -89,6 +143,8 @@ export class Mesh {
       this.#applyLocalTracks(p);
     }
 
+
+
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         this.socket.emit('signal', { to: peerId, data: { type: 'candidate', candidate: e.candidate } });
@@ -132,7 +188,11 @@ export class Mesh {
   #applyLocalTracks(p) {
     for (const kind of ['mic', 'cam', 'screen']) {
       const s = p.senders[kind];
-      if (s) s.replaceTrack(this.local[kind] || null).catch(() => {});
+      if (!s) continue;
+      const track = this.local[kind] || null;
+      s.replaceTrack(track)
+        .then(() => applyEncoding(s, kind, track))
+        .catch(() => {});
     }
   }
 

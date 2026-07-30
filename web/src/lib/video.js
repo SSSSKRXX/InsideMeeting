@@ -106,8 +106,8 @@ export class BackgroundProcessor {
       this.error = '';
     } catch (e) {
       this.error =
-        '虚拟背景模型加载失败。可能是网络访问不到模型仓库，' +
-        '可以在服务器上执行 bash scripts/fetch-models.sh 把模型下载到本地。' +
+        '虚拟背景模型加载失败。去「管理后台 → 设置 → 虚拟背景模型」点一下「下载模型」' +
+        '——服务器下一次，之后所有人都从局域网取，不用各自访问外网。' +
         `（${String(e.message || e).slice(0, 120)}）`;
       this.ready = false;
     } finally {

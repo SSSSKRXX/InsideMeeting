@@ -4,7 +4,7 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { config, ROOT, iceServers } from './config.js';
+import { config, ROOT, paths, iceServers, mediaSettings } from './config.js';
 import { attachSignaling, activeRooms } from './signaling.js';
 import { openSegment, appendChunk, closeSegment, meetingFiles, uploadLimitBytes } from './recording.js';
 import { listMeetings, readMeeting, updateMeeting, meetingDir, minutesDir, resolveArtifact } from './store.js';
@@ -15,6 +15,7 @@ import { pushSummary, enabledChannels } from './notify.js';
 import { publicSettings, listRooms } from './roomstore.js';
 import { adminStatus, storageBreakdown, cleanup, tailLog, adminRoomOps } from './admin.js';
 import { currentPaths, setPaths, validateDir, suggestLocations } from './storage.js';
+import { modelStatus, downloadModels, modelJob } from './models.js';
 import { readableSettings, saveSettings, resetSetting, applySettings, testAsr, testLlm, testNotify } from './settings.js';
 
 // 界面上保存的设置覆盖 .env，启动时先应用一次
@@ -72,6 +73,8 @@ app.get('/api/config', (req, res) => {
       notify: enabledChannels(),
     },
     archive: { needPassword: Boolean(config.archivePassword) },
+    media: mediaSettings(),
+    models: { ready: modelStatus().ready },
     // 一项关键配置都没有时，前端会显示「还没配置完」的引导
     setupDone: Boolean(config.asr.apiKey && config.llm.apiKey),
   });
@@ -175,6 +178,14 @@ app.post('/api/admin/settings/test', requireAdmin, async (req, res) => {
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }
+});
+
+// 虚拟背景模型：服务端下载一次，所有参会者从局域网拿
+app.get('/api/admin/models', requireAdmin, (req, res) => res.json(modelStatus()));
+
+app.post('/api/admin/models/download', requireAdmin, (req, res) => {
+  downloadModels().catch(() => {});
+  res.json({ ok: true, job: modelJob() });
 });
 
 app.get('/api/health', async (req, res) => {
@@ -350,6 +361,10 @@ app.delete('/api/meetings/:id', requireAdmin, (req, res) => {
 });
 
 // ---------------- 静态前端 ----------------
+
+// 虚拟背景模型从数据目录提供，不打包进前端产物 ——
+// 这样运行时下载的模型立刻可用，打包后的只读目录也不受影响
+app.use('/models', express.static(paths.models, { maxAge: '30d' }));
 
 const webDist = path.join(ROOT, 'web', 'dist');
 if (fs.existsSync(webDist)) {
