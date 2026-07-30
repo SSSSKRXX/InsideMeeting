@@ -22,9 +22,15 @@ const FILE = path.join(config.dataDir, 'settings.json');
 export const SCHEMA = [
   // ---------- 语音转写 ----------
   {
+    key: 'asrProvider', path: 'asr.provider', env: 'ASR_PROVIDER', group: 'ai', type: 'select',
+    label: '转写接口类型',
+    options: [['auto', '自动判断'], ['openai', 'OpenAI 兼容'], ['mimo', '小米 MiMo']],
+    help: '小米 MiMo 的 ASR 走 chat/completions 而不是 audio/transcriptions，两种接口不通用。填错会报 404。自动判断在多数情况下够用。',
+  },
+  {
     key: 'asrBaseUrl', path: 'asr.baseUrl', env: 'ASR_BASE_URL', group: 'ai', type: 'text',
     label: '转写服务地址',
-    help: 'OpenAI 兼容接口。用 OpenAI 就填 https://api.openai.com/v1，国内可换硅基流动、通义等。',
+    help: 'OpenAI 用 https://api.openai.com/v1；小米 MiMo 用 https://api.xiaomimimo.com/v1。',
     placeholder: 'https://api.openai.com/v1',
   },
   {
@@ -312,41 +318,86 @@ export function resetSetting(key) {
 
 // ---------------- 连通性测试 ----------------
 
-/** 测转写服务：发一段极短的静音音频过去，能返回就算通。 */
+/** 一个最小的合法 wav：44 字节头 + 0.1 秒静音 */
+function probeWav() {
+  const sampleRate = 8000;
+  const samples = 800;
+  const buf = Buffer.alloc(44 + samples * 2);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + samples * 2, 4);
+  buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(samples * 2, 40);
+  return buf;
+}
+
+/** 测转写服务：发一段极短的静音音频过去，能返回就算通。两种接口形态都要覆盖。 */
 export async function testAsr() {
   if (!config.asr.apiKey) return { ok: false, error: '还没有填转写服务密钥' };
+
+  const { detectProvider } = await import('./asr.js');
+  const provider = detectProvider();
+  const buf = probeWav();
+
   try {
-    // 一个最小的合法 wav：44 字节头 + 0.1 秒静音
-    const sampleRate = 8000;
-    const samples = 800;
-    const buf = Buffer.alloc(44 + samples * 2);
-    buf.write('RIFF', 0);
-    buf.writeUInt32LE(36 + samples * 2, 4);
-    buf.write('WAVEfmt ', 8);
-    buf.writeUInt32LE(16, 16);
-    buf.writeUInt16LE(1, 20);
-    buf.writeUInt16LE(1, 22);
-    buf.writeUInt32LE(sampleRate, 24);
-    buf.writeUInt32LE(sampleRate * 2, 28);
-    buf.writeUInt16LE(2, 32);
-    buf.writeUInt16LE(16, 34);
-    buf.write('data', 36);
-    buf.writeUInt32LE(samples * 2, 40);
+    let res;
+    if (provider === 'mimo') {
+      res = await fetch(`${config.asr.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': config.asr.apiKey,
+          Authorization: `Bearer ${config.asr.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.asr.model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'input_audio', input_audio: { data: `data:audio/wav;base64,${buf.toString('base64')}` } },
+              ],
+            },
+          ],
+          asr_options: { language: 'auto' },
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+    } else {
+      const form = new FormData();
+      form.append('file', new Blob([buf]), 'probe.wav');
+      form.append('model', config.asr.model);
+      res = await fetch(`${config.asr.baseUrl}/audio/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.asr.apiKey}` },
+        body: form,
+        signal: AbortSignal.timeout(20000),
+      });
+    }
 
-    const form = new FormData();
-    form.append('file', new Blob([buf]), 'probe.wav');
-    form.append('model', config.asr.model);
+    if (res.ok) {
+      return {
+        ok: true,
+        message: `连通正常 · ${provider === 'mimo' ? '小米 MiMo' : 'OpenAI 兼容'} 接口 · 模型 ${config.asr.model}`,
+      };
+    }
 
-    const res = await fetch(`${config.asr.baseUrl}/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.asr.apiKey}` },
-      body: form,
-      signal: AbortSignal.timeout(20000),
-    });
-
-    if (res.ok) return { ok: true, message: `连通正常，模型 ${config.asr.model}` };
     const text = await res.text().catch(() => '');
-    return { ok: false, error: `服务返回 ${res.status}：${text.slice(0, 200)}` };
+    // 404 基本就是接口类型选错了，直接把话说明白
+    const hint =
+      res.status === 404
+        ? provider === 'mimo'
+          ? '　（404：确认地址是 https://api.xiaomimimo.com/v1）'
+          : '　（404：如果你用的是小米 MiMo，把「转写接口类型」改成「小米 MiMo」——它的接口路径和 OpenAI 不一样）'
+        : '';
+    return { ok: false, error: `服务返回 ${res.status}${hint}：${text.slice(0, 200)}` };
   } catch (e) {
     return { ok: false, error: `连不上：${e.message}` };
   }

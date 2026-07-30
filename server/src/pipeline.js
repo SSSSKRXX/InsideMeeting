@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { meetingDir, minutesDir, readMeeting, updateMeeting } from './store.js';
 import { detectSpeechRegions, extractAudioClip, probeDuration, tmpDir, checkFfmpeg, installHint } from './media.js';
-import { transcribeFile, mapLimit, isLikelyHallucination } from './asr.js';
+import { transcribeFile, mapLimit, isLikelyHallucination, providerHasTimestamps } from './asr.js';
 import { summarizeTranscript, extractActionItems } from './llm.js';
 import { pushSummary, enabledChannels } from './notify.js';
 
@@ -65,11 +65,16 @@ export async function processMeeting(meetingId, { force = false, skipSummary = f
 
     // ---- 1. 每条音轨做静音检测，切出「有人说话」的片段 ----
     setJob(meetingId, { progress: 5, message: `检测语音区间（${micSegs.length} 条音轨）` });
+    // 不返回时间戳的服务商（比如小米 MiMo），整片只能得到一段文本。
+    // 所以把切片切得更短，让时间轴精度不至于太粗。
+    const hasTs = providerHasTimestamps();
+    const regionOpts = hasTs ? {} : { maxLen: 45, mergeGap: 0.8 };
+
     const clips = [];
     for (let i = 0; i < micSegs.length; i++) {
       const seg = micSegs[i];
       const full = path.join(dir, seg.file);
-      const regions = await detectSpeechRegions(full);
+      const regions = await detectSpeechRegions(full, regionOpts);
       for (let r = 0; r < regions.length; r++) {
         clips.push({
           speaker: seg.name || meeting.participants?.[seg.peerId]?.name || seg.peerId,

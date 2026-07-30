@@ -101,7 +101,7 @@ function reassignHost(io, room) {
   }
 }
 
-/** 把等候室里的人放进会议。admit-peer 和「关闭等候室」都走这里。 */
+/** 把等候室里的人放进会议。admit-peer、关闭等候室、主持人离场兜底都走这里。 */
 function admitWaiting(io, room, entries) {
   for (const w of entries) {
     clearTimeout(w.timer);
@@ -110,6 +110,16 @@ function admitWaiting(io, room, entries) {
     const wsock = w.socket;
     wsock.join(room.roomId);
     room.peers.set(wsock.id, w.peer);
+
+    // 房间里一个主持人都没有的话，让被放行的第一个人接管，
+    // 否则会出现「有人在会但没人能管」的状态
+    if (![...room.peers.values()].some((p) => p.isHost)) {
+      w.peer.isHost = true;
+      room.hostPeerId = w.peer.peerId;
+      const token = issueHostToken(room.roomId, w.peer.name);
+      wsock.emit('host-granted', { token, reason: '房间里没有主持人，已由你接管' });
+    }
+
     w.onAdmit?.(room, w.peer);
 
     updateMeeting(room.meetingId, (m) => {
@@ -186,7 +196,11 @@ export function attachSignaling(httpServer) {
         initiateTo: existing.map((p) => p.peerId),
         live: liveState(room.meetingId),
         hostToken: peer.hostToken || null,
-        waiting: peer.isHost ? waitingList(room) : [],
+        // 字段名必须和「被拦在等候室」那条的 waiting 区分开。
+        // 之前两者都叫 waiting：被拦时是 true，正常入会时是数组。
+        // 空数组在 JS 里是 truthy，前端一律判成被拦，
+        // 结果是任何人成功入会后都看到「正在等待主持人允许」。
+        waitingList: peer.isHost ? waitingList(room) : [],
       });
 
       socket.to(room.roomId).emit('peer-joined', { peer: publicPeer(peer) });
@@ -241,8 +255,13 @@ export function attachSignaling(httpServer) {
         peer.hostToken = issueHostToken(roomId, name);
       }
 
-      // 等候室：不是主持人就先在门外等着
-      if (settings.waitingRoom && !becomesHost) {
+      // 等候室只在「主持人真的在场」时才生效。
+      // 否则会死锁：主持人中途退出后再回来，会被自己设的等候室拦在外面，
+      // 而房间里没有任何人有权放行他。等候室的意义是让主持人审批，
+      // 主持人不在的时候它没有意义，只会把所有人挡在门外。
+      const hostPresent = [...room.peers.values()].some((p) => p.isHost);
+
+      if (settings.waitingRoom && !becomesHost && hostPresent) {
         const entry = {
           peerId,
           name,
@@ -264,7 +283,8 @@ export function attachSignaling(httpServer) {
         notifyHostOfWaiting(io, room);
         return ack({
           ok: false,
-          waiting: true,
+          waiting: true, // 只有这里才是布尔值，表示「被拦在门外」
+
           peerId,
           error: '正在等待主持人允许你加入',
           reason: 'waiting-room',
@@ -419,6 +439,13 @@ export function attachSignaling(httpServer) {
         return m;
       });
       if (peer.isHost) reassignHost(io, room);
+
+      // 主持人走了、房间也空了，但还有人在等候室干等 —— 直接放他们进来，
+      // 否则这些人会一直等到超时，而永远不会有人来放行
+      if (room.waiting.size && ![...room.peers.values()].some((p) => p.isHost)) {
+        admitWaiting(io, room, [...room.waiting.values()]);
+      }
+
       scheduleEnd(room);
       joined = null;
     };

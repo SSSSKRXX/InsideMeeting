@@ -221,7 +221,7 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
         setStartedAt(res.room.startedAt);
         setPeers(res.room.peers.filter((p) => p.peerId !== res.self.peerId));
         if (res.room.settings) setRoomSettings(res.room.settings);
-        if (res.waiting) setWaitingList(res.waiting);
+        if (res.waitingList) setWaitingList(res.waitingList);
         if (res.hostToken) localStorage.setItem(hostTokenKey, res.hostToken);
         setStatus('');
         setGate(null);
@@ -252,7 +252,10 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
           videoOn: Boolean(prefs.camOn),
         },
         (res) => {
-          if (res?.waiting) {
+          // 严格判 true。这里曾经写成 if (res?.waiting)，而成功入会时
+          // 服务端也回一个同名的数组字段，空数组是 truthy，
+          // 导致每个人进会后都卡在「正在等待主持人允许」的页面上。
+          if (res?.waiting === true) {
             setGate({ state: 'waiting', text: res.error, hostName: res.hostName });
             return;
           }

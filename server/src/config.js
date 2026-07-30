@@ -86,8 +86,10 @@ export const config = {
     mailAttach: bool(process.env.MAIL_ATTACH, true),
   },
 
-  // ASR（语音转写）— OpenAI 兼容接口
+  // ASR（语音转写）
   asr: {
+    // auto = 按地址和模型名自动判断；也可显式指定 openai / mimo
+    provider: (process.env.ASR_PROVIDER || 'auto').toLowerCase(),
     baseUrl: (process.env.ASR_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
     apiKey: process.env.ASR_API_KEY || process.env.OPENAI_API_KEY || '',
     model: process.env.ASR_MODEL || 'whisper-1',

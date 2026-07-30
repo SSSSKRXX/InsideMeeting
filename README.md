@@ -313,7 +313,22 @@ LLM_API_KEY=sk-xxx
 LLM_MODEL=gpt-4o-mini
 ```
 
-两个都是 OpenAI 兼容接口，可以换成任何兼容服务商（DeepSeek、Moonshot、通义、硅基流动），或指向本机的 faster-whisper-server / Ollama 做到全程离线，代码不用改。
+纪要模型是 OpenAI 兼容接口，可以换成任何兼容服务商（DeepSeek、Moonshot、通义、硅基流动），或指向本机 Ollama 做到全程离线。
+
+转写支持两种**形态完全不同**的接口，在设置里选「转写接口类型」：
+
+| | OpenAI 兼容 | 小米 MiMo |
+|---|---|---|
+| 路径 | `/audio/transcriptions` | `/chat/completions` |
+| 认证 | `Authorization: Bearer` | `api-key` 头 |
+| 传音频 | multipart 文件上传 | base64 塞进 messages |
+| 时间戳 | 有 | 无 |
+
+**填错类型会直接 404**——这是最容易踩的坑，因为地址和密钥看起来都对。默认的「自动判断」会按地址和模型名识别，一般不用手动选。
+
+小米 MiMo 的配置：地址 `https://api.xiaomimimo.com/v1`，模型 `mimo-v2.5-asr`。
+
+> MiMo 不返回时间戳，所以用它时系统会把音频切得更碎（每片最长 45 秒而不是 240 秒），让时间轴精度不至于太粗。这会让请求数变多，但单价通常能抵消。
 
 **关于成本**。三道闸门在控制实时纪要的开销：
 
