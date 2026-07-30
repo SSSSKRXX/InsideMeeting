@@ -170,7 +170,11 @@ async function startServer({ port = 8443 } = {}) {
     const url = `https://127.0.0.1:${port}/api/health`;
     for (let i = 0; i < 40; i++) {
       await new Promise((r) => setTimeout(r, 500));
-      if (!child) return { ok: false, error: '服务启动后立刻退出，请查看日志。' };
+      if (!child) {
+        // 直接把日志尾部带回去。只说「请查看日志」等于把排查甩给用户，
+        // 而这里明明拿得到原因。
+        return { ok: false, error: '服务启动后立刻退出。', detail: lastError(), logFile: logFile() };
+      }
       if (await ping(url)) {
         starting = false;
         emit({ type: 'started', port });
@@ -178,7 +182,12 @@ async function startServer({ port = 8443 } = {}) {
       }
     }
     starting = false;
-    return { ok: false, error: '服务启动超时（20 秒）。日志里应该有原因。' };
+    return {
+      ok: false,
+      error: '服务启动超时（20 秒没有响应）。',
+      detail: lastError(),
+      logFile: logFile(),
+    };
   } catch (e) {
     starting = false;
     child = null;
@@ -202,6 +211,23 @@ function stopServer() {
   return { ok: true };
 }
 
+/**
+ * 从日志尾部挑出最像「真正原因」的几行。
+ * 优先找 Error / 异常栈，找不到就退回最后几行非空内容。
+ */
+function lastError() {
+  try {
+    const lines = readLog(32 * 1024).split('\n').filter((l) => l.trim());
+    const idx = lines.findIndex(
+      (l, i) => i > lines.length - 40 && /Error|error:|Exception|Cannot|not defined|EADDRINUSE|SyntaxError/i.test(l)
+    );
+    const picked = idx >= 0 ? lines.slice(idx, idx + 8) : lines.slice(-8);
+    return picked.join('\n').slice(0, 1200);
+  } catch {
+    return '';
+  }
+}
+
 function readLog(bytes = 200 * 1024) {
   const f = logFile();
   if (!fs.existsSync(f)) return '还没有日志。启动一次服务就会生成。';
@@ -221,6 +247,7 @@ module.exports = {
   onServerEvent,
   shareUrl,
   readLog,
+  lastError,
   dataDir,
   logFile,
   lanAddress,

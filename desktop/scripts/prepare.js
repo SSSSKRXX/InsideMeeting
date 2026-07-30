@@ -28,7 +28,16 @@ console.log('准备打包内容…');
 fs.rmSync(OUT, { recursive: true, force: true });
 
 copy(path.join(ROOT, 'server', 'src'), path.join(OUT, 'server', 'src'));
-console.log('  ✓ 服务端源码');
+
+// 关键：服务端用的是 ES 模块，Node 靠最近的 package.json 里的 "type": "module" 判断。
+// 只复制 src 的话，Node 会一路向上找到 App 自己的 package.json（没有 type 字段），
+// 于是按 CommonJS 解析，遇到 import 立刻语法错误退出。开发环境不会暴露这个问题，
+// 因为那里 server/package.json 就在旁边。
+fs.writeFileSync(
+  path.join(OUT, 'server', 'package.json'),
+  JSON.stringify({ name: 'inside-meeting-server-bundled', private: true, type: 'module' }, null, 2)
+);
+console.log('  ✓ 服务端源码（含 type: module 声明）');
 
 const dist = path.join(ROOT, 'web', 'dist');
 if (!fs.existsSync(dist)) {

@@ -155,7 +155,20 @@ function refreshTray() {
 
 async function startAndReport(port) {
   const r = await srv.startServer({ port });
-  if (!r.ok) dialog.showErrorBox('服务启动失败', r.error || '未知错误');
+  if (!r.ok) {
+    // 把日志尾部直接摆出来，并给一个「打开日志目录」的按钮，
+    // 而不是让用户自己去猜 %APPDATA% 在哪
+    const { response } = await dialog.showMessageBox({
+      type: 'error',
+      title: '服务启动失败',
+      message: r.error || '未知错误',
+      detail: r.detail ? `日志最后几行：\n\n${r.detail}` : '日志里没有更多信息。',
+      buttons: ['知道了', '打开日志目录', '复制错误信息'],
+      defaultId: 0,
+    });
+    if (response === 1) shell.showItemInFolder(r.logFile || srv.logFile());
+    if (response === 2) clipboard.writeText(`${r.error}\n\n${r.detail || ''}`);
+  }
   refreshTray();
   win?.webContents.send('server-state', { ...srv.serverState(), url: srv.shareUrl(port) });
   return r;
