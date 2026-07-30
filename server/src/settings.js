@@ -429,18 +429,50 @@ export async function testLlm() {
   }
 }
 
-/** 测推送渠道：真发一条测试消息过去。 */
+/**
+ * 测推送渠道：真发一条消息过去。
+ * 有真实纪要就用真实的，没有就造一条示例 —— 刚配好想立刻验证时
+ * 不该被「你得先开一场会」挡住。
+ */
 export async function testNotify(channel) {
-  const { pushSummary } = await import('./notify.js');
+  const { pushSummary, sendOne } = await import('./notify.js');
   const { listMeetings } = await import('./store.js');
 
   const withSummary = listMeetings().find((m) => m.hasSummary);
+
   if (withSummary) {
     const r = await pushSummary(withSummary.meetingId, { only: [channel] });
     const failed = r.failed?.find((f) => f.channel === channel);
     if (failed) return { ok: false, error: failed.error };
-    if (r.sent?.includes(channel)) return { ok: true, message: '测试消息已发出，去群里/邮箱确认一下' };
+    if (r.sent?.includes(channel)) return { ok: true, message: '已用最近一场会议的纪要发出，去群里/邮箱确认一下' };
     return { ok: false, error: '这个渠道还没配置' };
   }
-  return { ok: false, error: '还没有任何已生成纪要的会议，无法发测试消息。先开一场会并生成纪要。' };
+
+  // 还没有真实会议，造一条示例消息
+  const now = new Date();
+  const sample = {
+    meetingId: 'sample',
+    title: '推送测试',
+    dateText: now.toLocaleString('zh-CN', { hour12: false }),
+    durationText: '3 分钟',
+    speakers: ['张三', '李四'],
+    summary:
+      '# 会议纪要\n\n## 一句话总结\n这是一条测试消息，说明推送渠道配置正确。\n\n' +
+      '## 关键结论与决定\n- @张三 确认推送已经打通。\n- @李四 负责把地址发给团队。\n\n' +
+      '## 待办事项\n| 事项 | 负责人 | 截止时间 |\n|---|---|---|\n| 配置 API 密钥 | @张三 | 本周 |\n',
+    transcript: '',
+    actions: [{ task: '配置 API 密钥', owner: '张三', due: '本周', timestamp: '[00:00:10]' }],
+    stats: [],
+    link: config.notify.baseUrl ? `${config.notify.baseUrl.replace(/\/$/, '')}/#/archive` : '',
+    dir: '',
+    artifacts: {},
+  };
+
+  try {
+    const r = await sendOne(channel, sample);
+    if (r?.skipped) return { ok: false, error: '这个渠道还没配置' };
+    return { ok: true, message: '示例消息已发出，去群里/邮箱确认一下' };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
 }

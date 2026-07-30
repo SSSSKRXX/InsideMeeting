@@ -243,6 +243,13 @@ async function sendEmail(p) {
 
 const CHANNELS = { wecom: sendWeCom, feishu: sendFeishu, email: sendEmail };
 
+/** 给单个渠道发一份现成的素材。测试用，不经过会议查找。 */
+export async function sendOne(channel, payload) {
+  const fn = CHANNELS[channel];
+  if (!fn) throw new Error(`不认识的渠道：${channel}`);
+  return fn(payload);
+}
+
 export function enabledChannels() {
   return {
     wecom: Boolean(config.notify.wecomWebhook),
