@@ -1,6 +1,6 @@
 {
   "name": "inside-meeting-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "InsideMeeting 桌面端：可作为服务器运行，也可只作为参会客户端",
   "main": "main.js",
