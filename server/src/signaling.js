@@ -11,6 +11,7 @@ import {
   issueHostToken,
   checkHostToken,
   getRoom,
+  dropRoom,
 } from './roomstore.js';
 
 /** roomId -> { meetingId, startedAt, peers: Map, waiting: Map, hostPeerId, endTimer } */
@@ -146,9 +147,28 @@ function admitWaiting(io, room, entries) {
   notifyHostOfWaiting(io, room);
 }
 
+/**
+ * 房间空了之后的收尾。
+ *
+ * 宽限 MEETING_GRACE_MS 是为了兜住「刷新页面」「网络抖了一下」这类情况 ——
+ * 有人在这段时间里回来，getLiveRoom() 会把 endTimer 清掉，会议继续。
+ *
+ * 宽限期真的过完了，就把这个房间彻底清空：
+ *   · 内存里的运行时状态（peers / waiting / 主持人指派）
+ *   · rooms.json 里的房间配置（密码、等候室、锁定、主持人令牌）
+ * 下一次有人用同一个房间号进来，就是全新的一场会，第一个进的人当主持人。
+ *
+ * **录制文件不动。** 录音、逐字稿、纪要、manifest 都在
+ * data/recordings/<meetingId>/ 下，这里只是给 manifest 打上「已结束」，
+ * 一个文件都不会删。要清理磁盘请走管理后台的「存储与清理」。
+ */
 function scheduleEnd(room) {
   if (room.peers.size > 0) return;
   room.endTimer = setTimeout(() => {
+    // 防串场：宽限期内如果这个房间号已经被一场新会议占用，
+    // 说明当前这个 room 对象早就作废了，什么都不该做
+    if (rooms.get(room.roomId) !== room) return;
+
     updateMeeting(room.meetingId, (m) => {
       m.endedAt = Date.now();
       m.status = 'ended';
@@ -157,6 +177,11 @@ function scheduleEnd(room) {
     endLive(room.meetingId);
     for (const w of room.waiting.values()) clearTimeout(w.timer);
     rooms.delete(room.roomId);
+
+    // 只删 rooms.json 里的这一条配置记录，录制文件毫发无损
+    if (dropRoom(room.roomId)) {
+      console.log(`[signaling] 房间 ${room.roomId} 已清空（录制文件保留）`);
+    }
   }, MEETING_GRACE_MS);
 }
 

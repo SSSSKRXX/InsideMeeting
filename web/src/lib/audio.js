@@ -33,6 +33,7 @@ export class MicProcessor {
     this.gateOpen = true;
     this._lastVoiceAt = 0;
     this._timer = null;
+    this._wake = null;
 
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -70,12 +71,39 @@ export class MicProcessor {
 
       this._buf = new Float32Array(this.analyser.fftSize);
       this._loop();
+      this._keepRunning();
       this.ok = true;
     } catch (e) {
       // WebAudio 出问题时退回原始轨，绝不能让人没声音
       this.error = e.message;
       this.ok = false;
     }
+  }
+
+  /**
+   * 保证 AudioContext 一直是 running。
+   *
+   * 这里修的是一个非常隐蔽的问题：没有用户手势时创建的 AudioContext
+   * 会以 suspended 状态起来，此时 MediaStreamAudioDestinationNode
+   * 输出的是一条**静音轨**。而这条轨恰好就是：
+   *   - 通过 mesh 发给所有对端的那条
+   *   - 分轨录制写进文件的那条
+   *   - 切片送去实时转写的那条
+   * 与此同时本地音量条读的是原始流，照常跳动 ——
+   * 于是现象是「我这边看着麦克风好好的，但别人听不见，纪要里也没有我」。
+   *
+   * 刷新页面后自动重连、直接用带房间号的链接进会，都会踩到这个。
+   */
+  _keepRunning() {
+    const kick = () => {
+      if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+    };
+    kick();
+
+    this._wake = () => kick();
+    document.addEventListener('pointerdown', this._wake, true);
+    document.addEventListener('keydown', this._wake, true);
+    this.ctx.addEventListener?.('statechange', this._wake);
   }
 
   /** 给上层用的输出轨。处理链挂了就返回原始轨。 */
@@ -88,8 +116,14 @@ export class MicProcessor {
     return this.ok ? this.dest.stream : this.raw;
   }
 
+  /** 处理链是否真的在出声。上层可以据此提示用户。 */
+  get running() {
+    return !this.ok || this.ctx?.state === 'running';
+  }
+
   setEnabled(on) {
     this.enabled = Boolean(on);
+    this.resume();
     if (!this.enabled && this.ok) {
       this.gate.gain.cancelScheduledValues(this.ctx.currentTime);
       this.gate.gain.setTargetAtTime(1, this.ctx.currentTime, ATTACK_S);
@@ -131,6 +165,11 @@ export class MicProcessor {
 
   destroy() {
     clearInterval(this._timer);
+    if (this._wake) {
+      document.removeEventListener('pointerdown', this._wake, true);
+      document.removeEventListener('keydown', this._wake, true);
+      this._wake = null;
+    }
     try {
       this.source?.disconnect();
       this.ctx?.close();

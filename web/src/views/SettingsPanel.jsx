@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * 设置面板。
@@ -98,15 +98,23 @@ export default function SettingsPanel({ api, flash }) {
   const [tests, setTests] = useState({});
   const [testing, setTesting] = useState('');
 
+  // 同上：flash 不能进依赖数组。
+  // 另外加一道硬保险 —— 只要有没保存的修改，就绝不重新拉取覆盖。
+  const flashRef = useRef(flash);
+  flashRef.current = flash;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
   const load = useCallback(async () => {
+    if (Object.keys(draftRef.current).length) return;
     try {
       const d = await api('settings');
       setData(d);
       setDraft({});
     } catch (e) {
-      flash(e.message);
+      flashRef.current(e.message);
     }
-  }, [api, flash]);
+  }, [api]);
 
   useEffect(() => {
     load();

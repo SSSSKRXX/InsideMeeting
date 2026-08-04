@@ -5,6 +5,7 @@ import { TrackRecorder, LiveChunker, createLiveCaption, screenShareSupported } f
 import { renderMarkdown } from '../lib/md.js';
 import { MicProcessor } from '../lib/audio.js';
 import { BackgroundProcessor, backgroundSupported } from '../lib/video.js';
+import { getMic, getCam, explainMediaError } from '../lib/devices.js';
 
 const SPEAK_THRESHOLD = 0.1;
 const SPEAKER_HOLD_MS = 2000; // 说话人切换的迟滞，避免画面来回跳
@@ -174,27 +175,32 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
     socketRef.current = socket;
 
     (async () => {
-      let stream;
+      // 麦克风和摄像头分开取。
+      // 原来是一次 getUserMedia 同时要 audio + video，只要摄像头不可用
+      // （没装、被别的程序占着、Windows 隐私设置只放开了麦克风），
+      // 整次调用就抛错，人根本进不了会，而且提示写的是「无法获取麦克风」，
+      // 把锅甩给了完全正常的那个设备。
+      const stream = new MediaStream();
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: prefs.micId ? { exact: prefs.micId } : undefined,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: prefs.camOn
-            ? {
-                deviceId: prefs.camId ? { exact: prefs.camId } : undefined,
-                height: { ideal: media.camHeight || 720 },
-                frameRate: { ideal: media.camFps || 30 },
-                facingMode: 'user',
-              }
-            : false,
-        });
+        const mic = await getMic(prefs.micId);
+        mic.getAudioTracks().forEach((t) => stream.addTrack(t));
       } catch (e) {
-        setStatus(`无法获取麦克风：${e.message}`);
+        setStatus(explainMediaError(e, '麦克风'));
         return;
+      }
+      if (prefs.camOn) {
+        try {
+          const cam = await getCam(prefs.camId, {
+            height: { ideal: media.camHeight || 720 },
+            frameRate: { ideal: media.camFps || 30 },
+          });
+          cam.getVideoTracks().forEach((t) => stream.addTrack(t));
+        } catch (e) {
+          // 摄像头是可选的，开不了就当没有，会照开、音频照录
+          console.warn('[room] 摄像头未能打开：', e);
+          setCamOn(false);
+          setTimeout(() => flash(explainMediaError(e, '摄像头')), 1500);
+        }
       }
       if (disposed) return stream.getTracks().forEach((t) => t.stop());
 
@@ -207,10 +213,20 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
       // 这样开关降噪时输出轨不变，不用重新协商、也不打断录制。
       const proc = new MicProcessor(stream);
       micProcRef.current = proc;
+      // AudioContext 没有用户手势时会以 suspended 起来，
+      // 那样 dest 输出的是一条静音轨 —— 而这条轨正是发给对端、
+      // 写进录制、送去转写的那一条。本地音量表读的是原始流，
+      // 所以现象是「我这边好好的，别人听不见，纪要里也没有我」。
+      proc.resume();
       if (prefs.denoise) {
         proc.setEnabled(true);
         setDenoise(true);
       }
+      setTimeout(() => {
+        if (micProcRef.current && !micProcRef.current.running) {
+          flash('音频处理未启动，点一下页面任意位置即可恢复');
+        }
+      }, 2500);
 
       createLevelMeter(stream, (v) => {
         levelsSelfRef.current = v;
@@ -404,44 +420,64 @@ export default function Room({ roomId, name, password, prefs, serverConfig, onLe
     }
   };
 
-  const toggleShare = async () => {
-    if (sharing) {
-      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-      screenStreamRef.current = null;
-      setLocalScreen(null);
-      meshRef.current?.setLocalTrack('screen', null);
-      recordersRef.current.screen?.stop();
-      delete recordersRef.current.screen;
-      setSharing(false);
-      socketRef.current?.emit('state', { sharing: false });
-      return;
-    }
-    if (!canShare) return flash('当前设备不支持屏幕共享（手机浏览器普遍不支持）');
-    try {
-      // 分辨率上限为 0 时不加约束，让浏览器按屏幕原生尺寸给 ——
-      // 强行指定会先缩放再编码，文字边缘会糊
-      const videoConstraints = { frameRate: { ideal: media.screenFps || 15 } };
-      if (media.screenMaxHeight) videoConstraints.height = { max: media.screenMaxHeight };
+  /** 只负责停止共享。必须是稳定引用 —— 见下面 onended 的说明。 */
+  const stopShare = useCallback(() => {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+    setLocalScreen(null);
+    meshRef.current?.setLocalTrack('screen', null);
+    recordersRef.current.screen?.stop();
+    delete recordersRef.current.screen;
+    setSharing(false);
+    socketRef.current?.emit('state', { sharing: false });
+  }, []);
 
-      const s = await navigator.mediaDevices.getDisplayMedia({
-        video: videoConstraints,
-        audio: true,
-      });
-      screenStreamRef.current = s;
-      const track = s.getVideoTracks()[0];
-      // 告诉编码器这是「细节优先」的内容，别为了帧率牺牲清晰度
-      try {
-        track.contentHint = 'detail';
-      } catch { /* 老浏览器没有 */ }
-      track.onended = () => toggleShare();
-      meshRef.current?.setLocalTrack('screen', track);
-      setLocalScreen(new MediaStream([track]));
-      setSharing(true);
-      socketRef.current?.emit('state', { sharing: true });
-      if (recording && meetingIdRef.current) startScreenRecorder(meetingIdRef.current, s);
-    } catch {
-      /* 用户取消 */
+  const toggleShare = async () => {
+    if (sharing) return stopShare();
+    if (!canShare) return flash('当前设备不支持屏幕共享（手机浏览器普遍不支持）');
+
+    // 分辨率上限为 0 时不加约束，让浏览器按屏幕原生尺寸给 ——
+    // 强行指定会先缩放再编码，文字边缘会糊
+    const base = { frameRate: { ideal: media.screenFps || 15 } };
+    if (media.screenMaxHeight) base.height = { max: media.screenMaxHeight };
+
+    let s;
+    try {
+      s = await navigator.mediaDevices.getDisplayMedia({ video: base, audio: true });
+    } catch (e) {
+      // 原来这里是 `catch { /* 用户取消 */ }`，把所有失败都当成取消，
+      // 于是「点了共享屏幕没反应」这件事在界面上永远查不出原因。
+      console.error('[screen-share] getDisplayMedia 失败：', e);
+      if (e?.name === 'OverconstrainedError') {
+        try {
+          s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        } catch (e2) {
+          return flash(`无法开启屏幕共享：${e2.name} — ${e2.message}`);
+        }
+      } else if (e?.name === 'NotAllowedError') {
+        // Electron 里主进程 callback({}) 也会走到这里，和「用户点了取消」不可区分
+        return flash('屏幕共享没有开始。如果你并没有点取消，请检查系统的屏幕录制权限。');
+      } else {
+        return flash(`无法开启屏幕共享：${e?.name || ''} ${e?.message || e}`);
+      }
     }
+
+    screenStreamRef.current = s;
+    const track = s.getVideoTracks()[0];
+    // 告诉编码器这是「细节优先」的内容，别为了帧率牺牲清晰度
+    try {
+      track.contentHint = 'detail';
+    } catch { /* 老浏览器没有 */ }
+    // 这里必须用 stopShare 而不是 toggleShare：
+    // toggleShare 每次渲染都会重建，onended 抓到的是**此刻**那一版，
+    // 里面的 sharing 恒为 false。用户点系统的「停止共享」时，
+    // 它会当成「还没开始」再走一遍开始流程 —— 表现就是选源框又弹出来、共享关不掉。
+    track.onended = () => stopShare();
+    meshRef.current?.setLocalTrack('screen', track);
+    setLocalScreen(new MediaStream([track]));
+    setSharing(true);
+    socketRef.current?.emit('state', { sharing: true });
+    if (recording && meetingIdRef.current) startScreenRecorder(meetingIdRef.current, s);
   };
 
   const toggleHand = () => {
