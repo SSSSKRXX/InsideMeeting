@@ -29,16 +29,21 @@ contextBridge.exposeInMainWorld('insideMeeting', {
  * executeJavaScript 跑在主世界，两边看不见对方。DOM 倒是共享的，
  * 所以这个函数在隔离世界里跑、往共享 DOM 上画界面，完全没问题。
  */
-ipcRenderer.on('pick-share-source', async (_e, { replyChannel, sources }) => {
-  const picked = await pickShareSource(sources);
-  ipcRenderer.send(replyChannel, picked);
-});
+
+/** DOM 还没准备好就等一下。页面正在导航时 document.body 可能是 null。 */
+function waitForBody() {
+  if (document.body) return Promise.resolve();
+  return new Promise((resolve) => {
+    if (document.readyState !== 'loading') return resolve();
+    document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
+  });
+}
 
 const pickShareSource = (sources) =>
   new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.style.cssText = `
-      position:fixed;inset:0;z-index:99999;background:#0e1116ee;
+      position:fixed;inset:0;z-index:2147483647;background:#0e1116ee;
       display:flex;flex-direction:column;padding:24px;box-sizing:border-box;
       font:14px -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#e6edf3;`;
 
@@ -55,36 +60,6 @@ const pickShareSource = (sources) =>
     const grid = document.createElement('div');
     grid.style.cssText = 'flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-content:start';
     wrap.appendChild(grid);
-
-    const section = (title, list) => {
-      if (!list.length) return;
-      const h = document.createElement('div');
-      h.textContent = title;
-      h.style.cssText = 'grid-column:1/-1;color:#8b97a6;font-size:12px;margin-top:4px';
-      grid.appendChild(h);
-      for (const s of list) {
-        const card = document.createElement('button');
-        card.style.cssText = `
-          background:#161b22;border:2px solid #2a3341;border-radius:10px;padding:8px;
-          color:#e6edf3;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px;`;
-        const img = document.createElement('img');
-        img.src = s.thumbnail;
-        img.style.cssText = 'width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:6px;background:#000';
-        const label = document.createElement('span');
-        label.textContent = s.name;
-        label.style.cssText = 'font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-        card.append(img, label);
-        card.onclick = () => {
-          selected = s;
-          [...grid.querySelectorAll('button')].forEach((b) => (b.style.borderColor = '#2a3341'));
-          card.style.borderColor = '#3b82f6';
-          confirmBtn.disabled = false;
-        };
-        grid.appendChild(card);
-      }
-    };
-    section('整个屏幕', screens);
-    section('应用窗口', windows);
 
     const foot = document.createElement('div');
     foot.style.cssText = 'display:flex;align-items:center;gap:12px;margin-top:16px';
@@ -113,16 +88,57 @@ const pickShareSource = (sources) =>
 
     const close = (val) => {
       wrap.remove();
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       resolve(val);
     };
-    const onKey = (e) => e.key === 'Escape' && close(null);
-    document.addEventListener('keydown', onKey);
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close(null);
+      }
+    };
+    // 用捕获阶段监听：会议页面自己也在监听键盘，别被它先吃掉
+    document.addEventListener('keydown', onKey, true);
+
+    const section = (title, list) => {
+      if (!list.length) return;
+      const h = document.createElement('div');
+      h.textContent = title;
+      h.style.cssText = 'grid-column:1/-1;color:#8b97a6;font-size:12px;margin-top:4px';
+      grid.appendChild(h);
+      for (const s of list) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.style.cssText = `
+          background:#161b22;border:2px solid #2a3341;border-radius:10px;padding:8px;
+          color:#e6edf3;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px;`;
+        const img = document.createElement('img');
+        img.src = s.thumbnail;
+        img.style.cssText = 'width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:6px;background:#000';
+        const label = document.createElement('span');
+        label.textContent = s.name;
+        label.title = s.name;
+        label.style.cssText = 'font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        card.append(img, label);
+        card.onclick = () => {
+          selected = s;
+          [...grid.querySelectorAll('button')].forEach((b) => (b.style.borderColor = '#2a3341'));
+          card.style.borderColor = '#3b82f6';
+          confirmBtn.disabled = false;
+        };
+        // 双击直接开始，少点一次
+        card.ondblclick = () => close({ id: s.id, withAudio });
+        grid.appendChild(card);
+      }
+    };
+    section('整个屏幕', screens);
+    section('应用窗口', windows);
 
     cancelBtn.onclick = () => close(null);
     confirmBtn.onclick = () => selected && close({ id: selected.id, withAudio });
 
     document.body.appendChild(wrap);
+    confirmBtn.focus();
 
     // 系统音频只有 Windows 抓得到，其它平台把选项禁掉并说明原因
     ipcRenderer.invoke('get-config').then((cfg) => {
@@ -132,5 +148,25 @@ const pickShareSource = (sources) =>
         audioLabel.title = 'macOS 需要安装 BlackHole 之类的虚拟声卡才能捕获系统声音';
         audioLabel.lastChild.textContent = '同时共享系统声音（本平台不支持）';
       }
-    });
+    }).catch(() => {});
   });
+
+/**
+ * 无论如何都要给主进程回一个值。
+ *
+ * 原来这里没有 try/finally：选源界面渲染时抛任何异常（最典型的是页面
+ * 正在导航、document.body 还是 null），主进程那边就只能干等 120 秒的超时，
+ * 而前端的 getDisplayMedia 全程没有任何反馈 —— 表现就是「点了共享屏幕没反应」。
+ */
+ipcRenderer.on('pick-share-source', async (_e, { replyChannel, sources }) => {
+  let picked = null;
+  try {
+    await waitForBody();
+    picked = await pickShareSource(sources);
+  } catch (err) {
+    console.error('[InsideMeeting] 选源界面出错：', err);
+    picked = null;
+  } finally {
+    ipcRenderer.send(replyChannel, picked);
+  }
+});

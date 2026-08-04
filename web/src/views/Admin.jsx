@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import SettingsPanel from './SettingsPanel.jsx';
 
 const fmtBytes = (b) => {
@@ -35,6 +35,11 @@ function PathSettings({ api, onSaved, flash }) {
   const [check, setCheck] = useState({});
   const [saving, setSaving] = useState(false);
 
+  // flash 每次渲染都是新函数，不能进依赖数组，否则父组件一渲染就重新拉一次配置、
+  // 把正在填的内容盖掉。用 ref 拿最新的，依赖里只留 api。
+  const flashRef = useRef(flash);
+  flashRef.current = flash;
+
   const load = useCallback(async () => {
     try {
       const d = await api('paths');
@@ -43,9 +48,9 @@ function PathSettings({ api, onSaved, flash }) {
       setMin(d.minutes || '');
       setSeparate(d.separate);
     } catch (e) {
-      flash(e.message);
+      flashRef.current(e.message);
     }
-  }, [api, flash]);
+  }, [api]);
 
   useEffect(() => {
     load();
@@ -316,10 +321,12 @@ export default function Admin({ onBack }) {
 
   useEffect(() => {
     if (!authed) return;
+    // 「设置」页全是输入框，没必要为了刷状态在这里制造重渲染
+    if (tab === 'settings') return;
     refresh();
     const t = setInterval(refresh, 10000);
     return () => clearInterval(t);
-  }, [authed, refresh]);
+  }, [authed, refresh, tab]);
 
   useEffect(() => {
     if (!authed) return;
@@ -328,10 +335,14 @@ export default function Admin({ onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, authed]);
 
-  const flash = (t) => {
+  // 必须是稳定引用。原来是组件体里的普通箭头函数，每次渲染都是新的 ——
+  // 而 SettingsPanel 和 PathSettings 把它放进了 useCallback 的依赖里，
+  // 于是「每 10 秒刷新状态 → 重渲染 → flash 变了 → load 变了 →
+  // 重新拉一次设置 → setDraft({})」，正在填的东西被整个清空。
+  const flash = useCallback((t) => {
     setMsg(t);
     setTimeout(() => setMsg(''), 5000);
-  };
+  }, []);
 
   const doCleanup = async (days, dryRun) => {
     setBusy('cleanup');

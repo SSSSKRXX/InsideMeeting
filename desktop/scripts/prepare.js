@@ -27,6 +27,24 @@ function copy(from, to) {
 console.log('准备打包内容…');
 fs.rmSync(OUT, { recursive: true, force: true });
 
+// ---- 图标 ----
+// package.json 的 build.files 里写了 "assets/**"，mac/win 的 icon 也指向
+// assets/icon.png，但 desktop/ 下**从来就没有 assets 目录** —— 图标只存在于
+// 仓库根的 tray/assets。结果打出来的包里 assets 是空的，
+// main.js 里 new Tray(空图) 在 Windows 上直接抛异常，
+// 把 app.whenReady() 回调打断在 refreshTray() 那一行，
+// 后面的 buildMenu()、服务自动启动全都不执行。
+// 这里在打包前把图标补齐。
+const iconSrc = path.join(ROOT, 'tray', 'assets');
+const iconDst = path.join(APP, 'assets');
+if (fs.existsSync(iconSrc)) {
+  fs.mkdirSync(iconDst, { recursive: true });
+  fs.cpSync(iconSrc, iconDst, { recursive: true });
+  console.log('  ✓ 托盘与应用图标');
+} else {
+  console.warn('  ! 没找到 tray/assets，托盘图标会退回内置兜底图');
+}
+
 copy(path.join(ROOT, 'server', 'src'), path.join(OUT, 'server', 'src'));
 
 // 关键：服务端用的是 ES 模块，Node 靠最近的 package.json 里的 "type": "module" 判断。

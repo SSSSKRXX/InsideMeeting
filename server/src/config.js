@@ -80,6 +80,14 @@ export const config = {
     turnUrls: (process.env.TURN_URLS || '').split(',').map((s) => s.trim()).filter(Boolean),
     turnUsername: process.env.TURN_USERNAME || '',
     turnPassword: process.env.TURN_PASSWORD || '',
+
+    // Cloudflare Realtime TURN。
+    // 它不接受静态用户名密码：后台建一个 TURN Key，由服务端拿这个 Key
+    // 去换一组有有效期的临时凭证。填了这两项就会自动启用（见下方 refreshCloudflareTurn）。
+    // Key 只留在服务端，不会下发到浏览器。
+    cfTurnKeyId: process.env.CF_TURN_KEY_ID || '',
+    cfTurnApiToken: process.env.CF_TURN_API_TOKEN || '',
+    cfTurnTtl: num(process.env.CF_TURN_TTL, 86400), // 凭证有效期，要覆盖得住最长的一场会
   },
 
   // 纪要自动推送：配了哪个渠道就发哪个
@@ -164,12 +172,55 @@ export function mediaSettings() {
 
 for (const p of Object.values(paths)) fs.mkdirSync(p, { recursive: true });
 
+// ---------------- Cloudflare Realtime TURN ----------------
+//
+// 用于「参会者装不了 Tailscale」的场景：手机浏览器直接开网页就能进会，
+// 打不通洞时音视频由 Cloudflare 中转。
+//
+// Cloudflare 不支持静态用户名密码 —— 必须由服务端拿 TURN Key 去换
+// 一组带 TTL 的临时凭证。所以这里在后台定时换一次并缓存，
+// iceServers() 保持同步，signaling.js 和 /api/config 两个调用方都不用改。
+let cfIce = null;
+let cfExpiresAt = 0;
+
+async function refreshCloudflareTurn() {
+  const { cfTurnKeyId: id, cfTurnApiToken: token, cfTurnTtl: ttl } = config.ice;
+  if (!id || !token) return;
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+    const data = await r.json();
+    const raw = data.iceServers;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    if (!list.length) throw new Error('返回里没有 iceServers 字段');
+    cfIce = list;
+    cfExpiresAt = Date.now() + ttl * 1000;
+    console.log(`[ice] 已获取 Cloudflare TURN 凭证，有效期 ${ttl} 秒`);
+  } catch (e) {
+    // 换不到就退回静态 TURN / 纯 STUN，不影响服务启动
+    console.error('[ice] 获取 Cloudflare TURN 凭证失败：', e.message);
+  }
+}
+
+if (config.ice.cfTurnKeyId && config.ice.cfTurnApiToken) {
+  refreshCloudflareTurn();
+  // 提前一半时间续期，别等过期了才换
+  const timer = setInterval(refreshCloudflareTurn, Math.max(60, config.ice.cfTurnTtl / 2) * 1000);
+  timer.unref?.(); // 别让 cli-process.js 这类一次性脚本因为这个定时器退不出去
+}
+
 export function iceServers() {
   // Tailscale / 局域网模式下，peer 的网卡地址本身就是互相可路由的，
   // ICE 用 host candidate 就能直连。此时问外部 STUN 既没用也没必要。
   if (config.networkMode === 'tailscale' || config.networkMode === 'lan') return [];
 
   const list = [{ urls: config.ice.stunUrls }];
+
+  // 静态凭证的 TURN：自建 coturn、Open Relay 之类
   if (config.ice.turnUrls.length) {
     list.push({
       urls: config.ice.turnUrls,
@@ -177,5 +228,10 @@ export function iceServers() {
       credential: config.ice.turnPassword,
     });
   }
+
+  // Cloudflare 的临时凭证。和上面的静态 TURN 可以并存，
+  // 浏览器会自己挑一条通得了的用。
+  if (cfIce && Date.now() < cfExpiresAt) list.push(...cfIce);
+
   return list;
 }

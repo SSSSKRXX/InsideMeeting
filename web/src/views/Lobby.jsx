@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { recordingSupported } from '../lib/recorder.js';
+import { getMic, getCam, listDevices, onDeviceChange, explainMediaError } from '../lib/devices.js';
 
 export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onArchive }) {
   const [name, setName] = useState(defaults?.name || '');
@@ -11,9 +12,11 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
   const [micId, setMicId] = useState('');
   const [camId, setCamId] = useState('');
   const [error, setError] = useState('');
+  const [camWarn, setCamWarn] = useState('');
   const [stream, setStream] = useState(null);
   const [denoise, setDenoise] = useState(true);
   const [roomInfo, setRoomInfo] = useState(null);
+  const [deviceTick, setDeviceTick] = useState(0);
   const videoRef = useRef(null);
 
   // 房间号变了就去问一下这个房间要不要密码、有没有等候室，
@@ -30,33 +33,61 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
     return () => clearTimeout(t);
   }, [roomId]);
 
+  // 插拔耳机、USB 麦克风之后要重新枚举一次，
+  // 否则下拉框里还是拔掉之前的那份列表
+  useEffect(() => onDeviceChange(() => setDeviceTick((n) => n + 1)), []);
+
   // 预览本地画面并列出设备
+  //
+  // 麦克风和摄像头分开取。原来合在一次 getUserMedia 里，
+  // 摄像头一坏就把麦克风一起带走，而且 enumerateDevices 写在同一个 try 里，
+  // 于是「摄像头打不开」的表现是「麦克风下拉框是空的」。
   useEffect(() => {
     let cancelled = false;
-    let s;
+    const opened = [];
+
     (async () => {
+      const out = new MediaStream();
+      setError('');
+      setCamWarn('');
+
+      // 1) 麦克风：这是必需品，失败才算真的失败
       try {
-        s = await navigator.mediaDevices.getUserMedia({
-          audio: micId ? { deviceId: { exact: micId } } : true,
-          video: camOn ? (camId ? { deviceId: { exact: camId } } : { width: 1280, height: 720 }) : false,
-        });
-        if (cancelled) return s.getTracks().forEach((t) => t.stop());
-        setStream(s);
-        if (videoRef.current) videoRef.current.srcObject = s;
-        const list = await navigator.mediaDevices.enumerateDevices();
-        setDevices({
-          mics: list.filter((d) => d.kind === 'audioinput'),
-          cams: list.filter((d) => d.kind === 'videoinput'),
-        });
+        const s = await getMic(micId);
+        opened.push(s);
+        s.getAudioTracks().forEach((t) => out.addTrack(t));
       } catch (e) {
-        setError(`无法访问摄像头/麦克风：${e.message}。请检查浏览器权限，并确认使用 https 或 localhost 访问。`);
+        if (!cancelled) setError(explainMediaError(e, '麦克风'));
       }
+
+      // 2) 摄像头：可选。打不开只提示，不影响入会，也不影响设备枚举
+      if (camOn) {
+        try {
+          const s = await getCam(camId);
+          opened.push(s);
+          s.getVideoTracks().forEach((t) => out.addTrack(t));
+        } catch (e) {
+          if (!cancelled) setCamWarn(explainMediaError(e, '摄像头'));
+        }
+      }
+
+      if (cancelled) return opened.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+
+      setStream(out);
+      if (videoRef.current) videoRef.current.srcObject = out;
+
+      // 3) 枚举设备。无论上面成没成都要执行 —— 这正是原来的 bug 所在。
+      //    另外 label 只有拿到对应权限才有值，所以摄像头没开时
+      //    摄像头那一栏的名字会是空的，下面渲染时给了兜底文案。
+      const list = await listDevices();
+      if (!cancelled) setDevices(list);
     })();
+
     return () => {
       cancelled = true;
-      s?.getTracks().forEach((t) => t.stop());
+      opened.forEach((s) => s.getTracks().forEach((t) => t.stop()));
     };
-  }, [camOn, micId, camId]);
+  }, [camOn, micId, camId, deviceTick]);
 
   const submit = (e) => {
     e.preventDefault();
@@ -133,15 +164,15 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
             <span>入会后开启增强降噪（压掉空调声和底噪，对会议纪要准确率有帮助）</span>
           </label>
 
-          <details className="devices">
-            <summary>设备选择</summary>
+          <details className="devices" open={Boolean(error || camWarn)}>
+            <summary>设备选择{devices.mics.length ? `（麦克风 ${devices.mics.length} 个）` : '（未检测到设备）'}</summary>
             <label>
               麦克风
               <select value={micId} onChange={(e) => setMicId(e.target.value)}>
                 <option value="">默认</option>
-                {devices.mics.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || '麦克风'}
+                {devices.mics.map((d, i) => (
+                  <option key={d.deviceId || i} value={d.deviceId}>
+                    {d.label || `麦克风 ${i + 1}`}
                   </option>
                 ))}
               </select>
@@ -150,16 +181,20 @@ export default function Lobby({ serverConfig, defaults, presetRoom, onJoin, onAr
               摄像头
               <select value={camId} onChange={(e) => setCamId(e.target.value)}>
                 <option value="">默认</option>
-                {devices.cams.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || '摄像头'}
+                {devices.cams.map((d, i) => (
+                  <option key={d.deviceId || i} value={d.deviceId}>
+                    {d.label || `摄像头 ${i + 1}`}
                   </option>
                 ))}
               </select>
             </label>
+            <button type="button" className="link" onClick={() => setDeviceTick((n) => n + 1)}>
+              重新检测设备
+            </button>
           </details>
 
           {error && <div className="error">{error}</div>}
+          {camWarn && <div className="warn">{camWarn} 摄像头不影响入会和录音，可以先关掉摄像头进会。</div>}
           {unsupported && (
             <div className="warn">
               当前浏览器不支持 MediaRecorder，无法参与录制。建议使用 Chrome 或 Edge（Windows / macOS 均可）。

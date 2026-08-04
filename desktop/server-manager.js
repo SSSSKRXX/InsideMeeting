@@ -1,6 +1,7 @@
 const { app } = require('electron');
-const { fork } = require('node:child_process');
+const { fork, execFile } = require('node:child_process');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const https = require('node:https');
@@ -66,6 +67,109 @@ function logFile() {
   return path.join(dataDir(), 'server.log');
 }
 
+// ---------------------------------------------------------------------------
+// 进程与端口
+//
+// 这一整段是为了修「服务启动后立刻退出 / EADDRINUSE: 0.0.0.0:8443」。
+//
+// 成因不是端口配置错了，而是**上一次的服务端进程没被杀干净**：
+//   1. 服务端是 fork 出去的独立进程，execPath 是 InsideMeeting.exe。
+//      Windows 上父进程被强杀（任务管理器、崩溃、托盘异常导致的异常退出）时，
+//      子进程不会跟着死，它继续占着 8443。
+//   2. 原来的 stopServer() 先把 `child = null` 再 kill。一旦 kill 失败，
+//      这个 pid 就永远丢了，谁也没法再找到它 —— 端口被占死到重启为止。
+//   3. child.kill() 在 Windows 上不会连带杀掉孙进程（ffmpeg）。
+//
+// 所以这里做三件事：把 pid 落盘、杀进程树、启动前预检端口。
+// ---------------------------------------------------------------------------
+
+function pidFile() {
+  return path.join(dataDir(), 'server.pid');
+}
+
+function readPid() {
+  try {
+    const n = Number(String(fs.readFileSync(pidFile(), 'utf8')).trim());
+    return Number.isInteger(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writePid(pid) {
+  try {
+    fs.writeFileSync(pidFile(), String(pid));
+  } catch { /* 记不上也不影响主流程 */ }
+}
+
+function clearPid() {
+  try {
+    fs.rmSync(pidFile(), { force: true });
+  } catch { /* noop */ }
+}
+
+/** 进程还在不在。EPERM 说明进程存在但没权限，也算活着。 */
+function alive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+/** 连同子孙进程一起杀。Windows 用 taskkill /T，其它平台先 TERM 再 KILL。 */
+function killTree(pid) {
+  return new Promise((resolve) => {
+    if (!pid || !alive(pid)) return resolve(true);
+    if (process.platform === 'win32') {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => resolve(!alive(pid)));
+      return;
+    }
+    try { process.kill(pid, 'SIGTERM'); } catch { /* 已经退了 */ }
+    setTimeout(() => {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* 已经退了 */ }
+      resolve(!alive(pid));
+    }, 1500);
+  });
+}
+
+/** 端口上有没有人在听。自己先试着 listen 一下最准，不依赖外部命令。 */
+function portBusy(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', (e) => resolve(e.code === 'EADDRINUSE'));
+    s.once('listening', () => s.close(() => resolve(false)));
+    try {
+      s.listen(port, '0.0.0.0');
+    } catch {
+      resolve(true);
+    }
+  });
+}
+
+/** 谁占着这个端口。拿不到就返回空数组，只用于把错误说清楚。 */
+function whoHoldsPort(port) {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      execFile('cmd', ['/c', `netstat -ano -p TCP | findstr LISTENING | findstr :${port}`], (e, out) => {
+        const pids = String(out || '')
+          .split(/\r?\n/)
+          .map((l) => l.trim().split(/\s+/).pop())
+          .map(Number)
+          .filter((n) => Number.isInteger(n) && n > 4);
+        resolve([...new Set(pids)]);
+      });
+      return;
+    }
+    execFile('lsof', ['-ti', `tcp:${port}`], (e, out) => {
+      const pids = String(out || '').split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+      resolve([...new Set(pids)]);
+    });
+  });
+}
+
 /** 优先返回 Tailscale 的 100.x 地址，其次任意内网地址 */
 function lanAddress() {
   const all = [];
@@ -112,6 +216,61 @@ function ping(url) {
   });
 }
 
+/**
+ * 启动前把端口清出来。
+ * @returns {null | object} null 表示端口是干净的，可以正常 fork
+ */
+async function clearPort(port) {
+  if (!(await portBusy(port))) return null;
+
+  const health = `https://127.0.0.1:${port}/api/health`;
+
+  // 1) 先看是不是我们自己上次没退干净的那个进程
+  const mine = readPid();
+  if (mine && alive(mine)) {
+    await killTree(mine);
+    clearPid();
+    await new Promise((r) => setTimeout(r, 800));
+    if (!(await portBusy(port))) return null;
+  }
+
+  // 2) 还占着。如果它能应答健康检查，说明端口上跑的就是一份 InsideMeeting
+  //    （比如你同时用源码方式 npm start 起过一个），那就直接复用，别再 fork 一个上去
+  if (await ping(health)) {
+    return {
+      ok: true,
+      external: true,
+      port,
+      url: shareUrl(port),
+      local: `https://localhost:${port}`,
+      note: `端口 ${port} 上已经有一个 InsideMeeting 服务在运行，已直接复用它。\n注意：这个进程不是本 App 启动的，"停止服务"管不到它。`,
+    };
+  }
+
+  // 3) 被别的程序占着，如实报出来
+  const pids = await whoHoldsPort(port);
+  const cmd =
+    process.platform === 'win32'
+      ? `netstat -ano | findstr :${port}\ntaskkill /PID <上面那个PID> /T /F`
+      : `lsof -i :${port}\nkill -9 <上面那个PID>`;
+  return {
+    ok: false,
+    error: `端口 ${port} 已被占用，服务无法启动。`,
+    detail:
+      (pids.length ? `占用它的进程号：${pids.join(', ')}\n\n` : '') +
+      '常见原因：\n' +
+      '· 上一次的服务端进程没退干净（强制关闭 App、崩溃、任务管理器结束进程都会这样）\n' +
+      '· 你同时用源码方式（npm start）也起了一份服务\n' +
+      '· 别的软件占用了这个端口\n\n' +
+      '手动清理：\n' +
+      cmd +
+      '\n\n也可以在设置里把端口换成 8444 之类的空闲端口。',
+    logFile: logFile(),
+    port,
+    pids,
+  };
+}
+
 async function startServer({ port = 8443 } = {}) {
   if (child || starting) return { ok: true, already: true };
 
@@ -124,6 +283,16 @@ async function startServer({ port = 8443 } = {}) {
   emit({ type: 'starting' });
 
   try {
+    // 端口预检。原来是直接 fork 上去，服务端 listen 撞上 EADDRINUSE 之后
+    // 以未捕获的 'error' 事件崩掉，App 这边只能看到「服务启动后立刻退出」，
+    // 真正的原因埋在日志里。
+    const pre = await clearPort(port);
+    if (pre) {
+      starting = false;
+      if (pre.ok) emit({ type: 'started', port });
+      return pre;
+    }
+
     const dir = dataDir();
     const certs = await ensureCert(path.join(app.getPath('userData'), 'certs'));
     const ffmpeg = binaryPath('ffmpeg-static');
@@ -155,14 +324,19 @@ async function startServer({ port = 8443 } = {}) {
       execPath: process.execPath,
     });
 
+    // pid 落盘。App 被强杀时子进程会活下来，靠这个文件下次启动才认得出它是自己人。
+    writePid(child.pid);
+
     child.on('exit', (code, signal) => {
       child = null;
       starting = false;
+      clearPid();
       emit({ type: 'stopped', code, signal });
     });
     child.on('error', (e) => {
       child = null;
       starting = false;
+      clearPid();
       emit({ type: 'error', error: e.message });
     });
 
@@ -173,7 +347,18 @@ async function startServer({ port = 8443 } = {}) {
       if (!child) {
         // 直接把日志尾部带回去。只说「请查看日志」等于把排查甩给用户，
         // 而这里明明拿得到原因。
-        return { ok: false, error: '服务启动后立刻退出。', detail: lastError(), logFile: logFile() };
+        const detail = lastError();
+        if (/EADDRINUSE/i.test(detail)) {
+          return {
+            ok: false,
+            error: `端口 ${port} 已被占用，服务无法启动。`,
+            detail:
+              '预检时端口还是空的，说明是在启动过程中被别的程序抢走了。\n' +
+              '稍等几秒重试一次，或换一个端口。\n\n' + detail,
+            logFile: logFile(),
+          };
+        }
+        return { ok: false, error: '服务启动后立刻退出。', detail, logFile: logFile() };
       }
       if (await ping(url)) {
         starting = false;
@@ -196,17 +381,31 @@ async function startServer({ port = 8443 } = {}) {
 }
 
 function stopServer() {
-  if (!child) return { ok: true, already: true };
   const p = child;
+
+  if (!p) {
+    // 没有在管的子进程，但可能有上次留下的孤儿还占着端口，一并清掉
+    const orphan = readPid();
+    if (orphan && alive(orphan)) {
+      killTree(orphan).then(() => clearPid());
+      emit({ type: 'stopped' });
+      return { ok: true, orphan: true };
+    }
+    clearPid();
+    return { ok: true, already: true };
+  }
+
+  const pid = p.pid;
   child = null;
   try {
-    p.kill('SIGTERM');
-    setTimeout(() => {
-      try {
-        p.kill('SIGKILL');
-      } catch { /* 已经退了 */ }
-    }, 4000);
-  } catch { /* noop */ }
+    p.kill();
+  } catch { /* 已经退了 */ }
+
+  // 关键：不能像原来那样「先把 child 置空、再 kill 一下就不管了」。
+  // kill 失败时 pid 就丢了，那个进程会一直占着 8443；
+  // Windows 上 child.kill() 也不会连带杀掉 ffmpeg 这类孙进程。
+  killTree(pid).then(() => clearPid());
+
   emit({ type: 'stopped' });
   return { ok: true };
 }
@@ -251,4 +450,8 @@ module.exports = {
   dataDir,
   logFile,
   lanAddress,
+  // 给上层排查用
+  portBusy,
+  whoHoldsPort,
+  killTree,
 };
