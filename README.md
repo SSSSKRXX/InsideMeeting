@@ -142,6 +142,24 @@ bash scripts/start.sh     # Windows: powershell -ExecutionPolicy Bypass -File sc
 
 在 Mac mini 和每个人的电脑/手机上装 Tailscale，登录同一个账号（或用 Tailnet 邀请成员）：
 
+> **所有人必须是同一个 tailnet 的「成员」，不能用「共享设备」的方式加进来。** 这两件事在
+> Tailscale 里是不同的机制：
+>
+> - **邀请用户**（Users → Invite external users）—— 对方成为 tailnet 成员，他的设备和
+>   **所有**成员的设备互相可见。
+> - **共享设备**（Share device）—— 只是点对点授权，只有分享方和被分享方能通，
+>   **被分享的设备之间互相看不见**。
+>
+> 用共享的方式会踩一个非常难查的坑：每个人都连得上服务器（因为服务器是分享方），
+> 会也能进，但**参会者之间互相听不到声音**。因为媒体是 P2P 全网状的 —— 4 个人有 6 条
+> 连接，只有 3 条经过服务器，剩下 3 条完全不经过它。
+>
+> 排查时的特征：`tailscale ping 对方的100.x` 返回 `no matching peer`，
+> 会议界面上那个人的画面框一直显示 `connecting`。
+>
+> 顺带一提，这也是为什么 `NETWORK_MODE=tailscale` 下没有任何兜底 ——
+> 它不下发 STUN/TURN，打不通就是打不通。要容错就得配 TURN，见下面的 `public` 模式。
+
 ```bash
 brew install --cask tailscale   # Mac mini
 ```

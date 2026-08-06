@@ -34,7 +34,12 @@ function Video({ stream, muted, mirror, className, label, contain }) {
 function RemoteAudio({ stream }) {
   const ref = useRef(null);
   useEffect(() => {
-    if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream;
+    const el = ref.current;
+    if (!el || !stream || el.srcObject === stream) return;
+    el.srcObject = stream;
+    // <audio autoPlay> 被自动播放策略拦下时是**静默失败**的，元素就那么停着，
+    // 没有任何报错。显式调一次 play 并吞掉 rejection，至少让它有机会起来。
+    el.play().catch(() => {});
   }, [stream]);
   return <audio ref={ref} autoPlay playsInline style={{ display: 'none' }} />;
 }

@@ -155,10 +155,22 @@ export class Mesh {
       const mid = e.transceiver?.mid;
       const kind =
         mid === '0' ? 'mic' : mid === '1' ? 'cam' : mid === '2' ? 'screen' : e.track.kind === 'audio' ? 'mic' : 'cam';
-      const stream = p.streams[kind];
-      // 同一 slot 只保留最新的一条 track
-      for (const t of stream.getTracks()) stream.removeTrack(t);
-      stream.addTrack(e.track);
+      // 换一条新的 MediaStream，而不是往原来那条里 addTrack。
+      //
+      // 原来是就地修改 p.streams[kind]，对象引用始终不变 —— 而 React 那边
+      // <audio> / <video> 的 useEffect 依赖的正是这个引用。于是：元素挂载时
+      // 绑到的是 #ensurePeer 里 new MediaStream() 出来的**空流**，停在
+      // readyState 0（HAVE_NOTHING）；之后 addTrack 进去的轨它不会自己接住，
+      // effect 也因为引用没变而不再重跑。
+      //
+      // 表现就是「有人听得到、有人听不到」，取决于 React 挂载和 ontrack 谁先谁后。
+      // 而电平表反而是正常的 —— createLevelMeter 是在轨加进去之后才创建的，
+      // 所以「边框会亮但没声音」这个组合曾经把排查方向带偏。
+      //
+      // 注意 addTrack() 不会触发 MediaStream 的 addtrack 事件（规范如此，
+      // 那个事件只在浏览器自己加轨时触发），所以监听事件是没用的，必须换引用。
+      const stream = new MediaStream([e.track]);
+      p.streams[kind] = stream;
 
       // 远端音轨到了就挂一个音量表，用于「当前说话人」自动聚焦。
       // 刻意不在这里触发重渲染 —— 音量每帧都在变，由上层定时轮询读取。

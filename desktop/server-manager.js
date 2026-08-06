@@ -308,7 +308,11 @@ async function startServer({ port = 8443 } = {}) {
       TLS_ENABLED: 'true',
       TLS_CERT: certs.certPath,
       TLS_KEY: certs.keyPath,
-      NETWORK_MODE: process.env.NETWORK_MODE || 'tailscale',
+      // 这里原来有一行 `NETWORK_MODE: process.env.NETWORK_MODE || 'tailscale'`。
+      // 它把变量显式塞进了子进程环境，而 dotenv 默认**不覆盖已存在的环境变量** ——
+      // 结果是 .env 里写的 NETWORK_MODE 永远不生效，只能改代码或者改系统环境变量。
+      // 去掉之后交给 config.js 自己处理：它的默认值同样是 'tailscale'，
+      // 行为不变，但 .env 终于能管用了。
     };
     if (ffmpeg) env.FFMPEG_PATH = ffmpeg;
     if (ffprobe) env.FFPROBE_PATH = ffprobe;
